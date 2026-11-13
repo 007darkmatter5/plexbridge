@@ -56,8 +56,11 @@ jobs:
             echo "tags=$IMAGE:$version" >> "$GITHUB_OUTPUT"
             echo "version=$version" >> "$GITHUB_OUTPUT"
           else
+            # Image tags stay latest and sha-<12>. -p:Version must be a NuGet version;
+            # "sha-<commit>" is rejected with NETSDK1018.
+            base=$(tr -d '[:space:]' < VERSION)
             echo "tags=$IMAGE:latest,$IMAGE:$sha" >> "$GITHUB_OUTPUT"
-            echo "version=$sha" >> "$GITHUB_OUTPUT"
+            echo "version=${base}.0-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
           fi
 
       - uses: docker/setup-buildx-action@v4
