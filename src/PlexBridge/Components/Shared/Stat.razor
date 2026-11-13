@@ -1,0 +1,11 @@
+<MudPaper Class="pa-3" Outlined="true" Elevation="0">
+    <MudText Typo="Typo.caption" Style="color: var(--mud-palette-text-secondary)">@Label</MudText>
+    <MudText Typo="Typo.h5">@Value</MudText>
+    <MudText Typo="Typo.caption">@Hint</MudText>
+</MudPaper>
+
+@code {
+    [Parameter] public string Label { get; set; } = "";
+    [Parameter] public string Value { get; set; } = "";
+    [Parameter] public string Hint { get; set; } = "";
+}

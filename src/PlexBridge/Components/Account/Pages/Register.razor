@@ -1,0 +1,104 @@
+@page "/Account/Register"
+
+@using System.ComponentModel.DataAnnotations
+
+@inject UserManager<ApplicationUser> UserManager
+@inject AdminAccountService Accounts
+@inject SignInManager<ApplicationUser> SignInManager
+@inject NavigationManager NavigationManager
+@inject IdentityRedirectManager RedirectManager
+@inject ILogger<Register> Logger
+
+<PageTitle>Create admin account · PlexBridge</PageTitle>
+
+<div class="acct-wrap">
+    <MudText Typo="Typo.h4" GutterBottom="true">Create the admin account</MudText>
+    @if (_closed)
+    {
+        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">
+            An admin account already exists. Sign-ups are closed.
+        </MudAlert>
+        <MudLink Href="Account/Login" Class="mt-3 d-inline-block">Log in</MudLink>
+    }
+    else
+    {
+        <MudText Typo="Typo.body2" Class="mb-4">
+            This first account is the admin for this install. There is no password reset email in this version.
+        </MudText>
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-3">@errorMessage</MudAlert>
+        }
+        <EditForm Model="Input" method="post" OnValidSubmit="RegisterUser" FormName="register">
+            <DataAnnotationsValidator />
+            <MudStack Spacing="3">
+                <MudStaticTextField For="@(() => Input.Email)" @bind-Value="Input.Email" Label="Email" Variant="Variant.Outlined"
+                                    UserAttributes="@(new() { { "autocomplete", "username" } })" />
+                <MudStaticTextField For="@(() => Input.Password)" @bind-Value="Input.Password" Label="Password" InputType="InputType.Password" Variant="Variant.Outlined"
+                                    HelperText="At least 8 characters, with an uppercase letter, a lowercase letter, a number, and a symbol."
+                                    UserAttributes="@(new() { { "autocomplete", "new-password" } })" />
+                <MudStaticTextField For="@(() => Input.ConfirmPassword)" @bind-Value="Input.ConfirmPassword" Label="Confirm password" InputType="InputType.Password" Variant="Variant.Outlined"
+                                    UserAttributes="@(new() { { "autocomplete", "new-password" } })" />
+                <MudStaticButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" FormAction="FormAction.Submit">Create account</MudStaticButton>
+            </MudStack>
+        </EditForm>
+        <MudText Class="mt-4">
+            Already created? <MudLink Href="Account/Login">Log in</MudLink>
+        </MudText>
+    }
+</div>
+
+@code {
+    private string? errorMessage;
+    private bool _closed;
+
+    [SupplyParameterFromForm]
+    private InputModel Input { get; set; } = default!;
+
+    [SupplyParameterFromQuery]
+    private string? ReturnUrl { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Input ??= new();
+        _closed = await Accounts.HasAccountAsync();
+    }
+
+    public async Task RegisterUser()
+    {
+        if (await Accounts.HasAccountAsync())
+        {
+            _closed = true;
+            return;
+        }
+
+        var result = await Accounts.CreateAdminAsync(Input.Email, Input.Password);
+        if (!result.Succeeded)
+        {
+            errorMessage = string.Join(" ", result.Errors.Select(error => error.Description));
+            return;
+        }
+
+        Logger.LogInformation("Admin account created.");
+        var user = await UserManager.FindByEmailAsync(Input.Email.Trim());
+        if (user is not null)
+            await SignInManager.SignInAsync(user, isPersistent: false);
+        RedirectManager.RedirectTo(string.IsNullOrEmpty(ReturnUrl) ? "" : ReturnUrl);
+    }
+
+    private sealed class InputModel
+    {
+        [Required]
+        [EmailAddress]
+        public string Email { get; set; } = "";
+
+        [Required]
+        [StringLength(100, ErrorMessage = "The password must be at least {2} characters.", MinimumLength = 8)]
+        [DataType(DataType.Password)]
+        public string Password { get; set; } = "";
+
+        [DataType(DataType.Password)]
+        [Compare("Password", ErrorMessage = "The passwords don't match.")]
+        public string ConfirmPassword { get; set; } = "";
+    }
+}

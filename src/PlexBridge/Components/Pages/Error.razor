@@ -1,0 +1,22 @@
+@page "/Error"
+@attribute [AllowAnonymous]
+@using System.Diagnostics
+
+<PageTitle>Error · PlexBridge</PageTitle>
+
+<MudText Typo="Typo.h4">Something went wrong</MudText>
+<MudText Typo="Typo.body1" Class="mt-2">The page could not be completed. No server token is included in this message.</MudText>
+@if (!string.IsNullOrEmpty(RequestId))
+{
+    <MudText Typo="Typo.caption" Class="mt-3">Request ID: @RequestId</MudText>
+}
+
+@code {
+    [CascadingParameter]
+    private HttpContext? HttpContext { get; set; }
+
+    private string? RequestId { get; set; }
+
+    protected override void OnInitialized() =>
+        RequestId = Activity.Current?.Id ?? HttpContext?.TraceIdentifier;
+}

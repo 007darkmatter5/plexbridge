@@ -1,0 +1,32 @@
+# PlexBridge on Unraid
+#
+# For the Docker Compose Manager plugin (Apps > Docker Compose Manager):
+#   Docker tab > Compose > Add New Stack > name it "plexbridge" > Edit Stack > Compose File > paste this file > Save
+#   then Compose Up.
+#
+# Open http://<your-unraid-ip>:8080 and create the admin account. That first account is the only one.
+#
+# Data lives in /mnt/user/appdata/plexbridge:
+#   plexbridge.db   the SQLite database
+#   keys/           keys that encrypt Plex tokens and sign login cookies
+#   logs/           plexbridge.log
+#
+# The container gives that folder to PUID:PGID when it starts, then runs PlexBridge as that user (not root).
+
+name: plexbridge
+
+services:
+  plexbridge:
+    image: ghcr.io/007darkmatter5/plexbridge:latest
+    container_name: plexbridge
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      PUID: 99
+      PGID: 100
+      TZ: Etc/UTC
+      # ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"   # when a reverse proxy handles HTTPS in front of it
+    volumes:
+      - /mnt/user/appdata/plexbridge:/config
+      - /etc/localtime:/etc/localtime:ro

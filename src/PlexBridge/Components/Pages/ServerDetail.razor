@@ -1,0 +1,156 @@
+@page "/servers/{Id:int}"
+@attribute [Authorize]
+@inject PlexServerService Servers
+@implements IDisposable
+
+<PageTitle>@( _server?.Name ?? "Server") · PlexBridge</PageTitle>
+
+@if (_missing)
+{
+    <MudAlert Severity="Severity.Warning">That server is not saved.</MudAlert>
+    <MudButton Href="/" Variant="Variant.Text">Back to the dashboard</MudButton>
+}
+else if (_server is null)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else
+{
+    <MudStack Spacing="3">
+        <MudLink Href="/">Dashboard</MudLink>
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
+            <MudText Typo="Typo.h4">@_server.Name</MudText>
+            <MudChip T="string" Color="Color.Info" Variant="Variant.Outlined" Icon="@Icons.Material.Filled.Visibility">Read-only inventory</MudChip>
+            <MudChip T="string" Size="Size.Small" Color="@(_server.Status == "Online" ? Color.Success : Color.Default)">@_server.Status</MudChip>
+        </MudStack>
+        <MudText Typo="Typo.body2" Class="pb-path">@_server.BaseUrl</MudText>
+        @if (!string.IsNullOrWhiteSpace(_server.FriendlyName) || !string.IsNullOrWhiteSpace(_server.ServerVersion))
+        {
+            <MudText Typo="Typo.body2">
+                @(_server.FriendlyName) @(_server.ServerVersion)
+                @if (!string.IsNullOrWhiteSpace(_server.MachineIdentifier))
+                {
+                    <span> · machine @_server.MachineIdentifier</span>
+                }
+            </MudText>
+        }
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">
+            Titles below are read live and are not stored. External ids are displayed for a later matching milestone. Nothing is matched or written.
+        </MudAlert>
+        @if (!string.IsNullOrWhiteSpace(_server.LastError))
+        {
+            <MudAlert Severity="Severity.Error">@_server.LastError</MudAlert>
+        }
+        @if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <MudAlert Severity="Severity.Error">@_error</MudAlert>
+        }
+
+        @if (_server.Libraries.Count == 0)
+        {
+            <MudAlert Severity="Severity.Normal">No libraries saved yet. Refresh the inventory from the dashboard.</MudAlert>
+        }
+
+        @foreach (var library in _server.Libraries)
+        {
+            <MudPaper Class="pa-4" Outlined="true" @key="library.SectionKey">
+                <MudStack Spacing="2">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Wrap="Wrap.Wrap">
+                        <div>
+                            <MudText Typo="Typo.h6">@library.Title</MudText>
+                            <MudText Typo="Typo.body2">@library.Type · @library.ItemCount items</MudText>
+                        </div>
+                        <MudButton Variant="Variant.Outlined" Disabled="_busyKey == library.SectionKey" OnClick="() => LoadPreview(library.SectionKey, 0)">
+                            Preview titles
+                        </MudButton>
+                    </MudStack>
+                    @foreach (var path in library.Locations)
+                    {
+                        <MudText Typo="Typo.body2" Class="pb-path">@path</MudText>
+                    }
+                    @if (_previews.TryGetValue(library.SectionKey, out var preview))
+                    {
+                        <MudSimpleTable Dense="true" Hover="true" Style="overflow-x: auto">
+                            <thead>
+                                <tr>
+                                    <th>Title</th>
+                                    <th>Year</th>
+                                    <th>External ids</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var item in preview.Items)
+                                {
+                                    <tr>
+                                        <td>@item.Title</td>
+                                        <td>@(item.Year?.ToString() ?? "—")</td>
+                                        <td>@External(item)</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </MudSimpleTable>
+                        <MudText Typo="Typo.caption">Showing @preview.Items.Count of @preview.Total. Page starts at @preview.Start.</MudText>
+                        @if (preview.Start + preview.Items.Count < preview.Total)
+                        {
+                            <MudButton Variant="Variant.Text" Disabled="_busyKey == library.SectionKey" OnClick="() => LoadPreview(library.SectionKey, preview.Start + preview.Items.Count)">Load more</MudButton>
+                        }
+                    }
+                </MudStack>
+            </MudPaper>
+        }
+    </MudStack>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private readonly CancellationTokenSource _lifetime = new();
+    private PlexServerSummary? _server;
+    private bool _missing;
+    private string? _error;
+    private string? _busyKey;
+    private readonly Dictionary<string, LibraryPreview> _previews = new();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _error = null;
+        _server = await Servers.GetAsync(Id, _lifetime.Token);
+        _missing = _server is null;
+    }
+
+    private async Task LoadPreview(string sectionKey, int start)
+    {
+        _busyKey = sectionKey;
+        _error = null;
+        try
+        {
+            var page = await Servers.PreviewAsync(Id, sectionKey, start, 25, _lifetime.Token);
+            if (start > 0 && _previews.TryGetValue(sectionKey, out var existing))
+                page = page with { Items = existing.Items.Concat(page.Items).ToList(), Start = existing.Start };
+            _previews[sectionKey] = page;
+        }
+        catch (PlexBridgeException exception)
+        {
+            _error = exception.Message;
+        }
+        catch (Exception)
+        {
+            _error = "The preview could not be loaded.";
+        }
+        finally
+        {
+            _busyKey = null;
+        }
+    }
+
+    private static string External(PlexLibraryItem item)
+    {
+        var parts = new List<string>();
+        if (item.ImdbId is not null) parts.Add("IMDb " + item.ImdbId);
+        if (item.TmdbId is not null) parts.Add("TMDB " + item.TmdbId);
+        if (item.TvdbId is not null) parts.Add("TVDB " + item.TvdbId);
+        return parts.Count == 0 ? "—" : string.Join(" · ", parts);
+    }
+
+    public void Dispose() => _lifetime.Cancel();
+}

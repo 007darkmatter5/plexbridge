@@ -1,0 +1,110 @@
+@page "/Account/Login"
+
+@using System.ComponentModel.DataAnnotations
+
+@inject SignInManager<ApplicationUser> SignInManager
+@inject AdminAccountService Accounts
+@inject NavigationManager NavigationManager
+@inject IdentityRedirectManager RedirectManager
+@inject ILogger<Login> Logger
+
+<PageTitle>Log in · PlexBridge</PageTitle>
+
+<div class="acct-wrap">
+    <MudText Typo="Typo.h4" GutterBottom="true">Log in</MudText>
+    @if (!_hasAccount)
+    {
+        <MudAlert Severity="Severity.Info" Class="mb-4" Variant="Variant.Outlined">
+            This install has no admin yet. Create that account before connecting a Plex server.
+        </MudAlert>
+    }
+    else
+    {
+        <MudText Typo="Typo.body2" Class="mb-4">Sign in to view servers and library inventory. PlexBridge does not write to Plex.</MudText>
+    }
+
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <MudAlert Severity="Severity.Error" Class="mb-3">@errorMessage</MudAlert>
+    }
+
+    <EditForm EditContext="editContext" method="post" OnSubmit="LoginUser" FormName="login">
+        <DataAnnotationsValidator />
+        <MudStack Spacing="3">
+            <MudStaticTextField For="@(() => Input.Email)" @bind-Value="Input.Email" Label="Email" Variant="Variant.Outlined"
+                                UserAttributes="@(new() { { "autocomplete", "username" }, { "aria-required", "true" } })" />
+            <MudStaticTextField For="@(() => Input.Password)" @bind-Value="Input.Password" Label="Password" InputType="InputType.Password" Variant="Variant.Outlined"
+                                UserAttributes="@(new() { { "autocomplete", "current-password" }, { "aria-required", "true" } })" />
+            <MudStaticCheckBox For="@(() => Input.RememberMe)" @bind-Value="Input.RememberMe" Color="Color.Primary">Remember this browser</MudStaticCheckBox>
+            <MudStaticButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" FormAction="FormAction.Submit">Log in</MudStaticButton>
+        </MudStack>
+    </EditForm>
+
+    @if (!_hasAccount)
+    {
+        <MudText Class="mt-4">
+            <MudLink Href="Account/Register">Create the admin account</MudLink>
+        </MudText>
+    }
+</div>
+
+@code {
+    private string? errorMessage;
+    private EditContext editContext = default!;
+    private bool _hasAccount;
+
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    [SupplyParameterFromForm]
+    private InputModel Input { get; set; } = default!;
+
+    [SupplyParameterFromQuery]
+    private string? ReturnUrl { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Input ??= new();
+        editContext = new EditContext(Input);
+        _hasAccount = await Accounts.HasAccountAsync();
+        if (HttpMethods.IsGet(HttpContext.Request.Method) && SignInManager.IsSignedIn(HttpContext.User))
+            RedirectManager.RedirectTo(ReturnUrl);
+    }
+
+    public async Task LoginUser()
+    {
+        if (!editContext.Validate())
+            return;
+
+        var result = await SignInManager.PasswordSignInAsync(Input.Email, Input.Password, Input.RememberMe, lockoutOnFailure: true);
+        if (result.Succeeded)
+        {
+            Logger.LogInformation("Admin signed in.");
+            RedirectManager.RedirectTo(string.IsNullOrEmpty(ReturnUrl) ? "" : ReturnUrl);
+            return;
+        }
+
+        if (result.IsLockedOut)
+        {
+            Logger.LogWarning("Sign-in locked out.");
+            RedirectManager.RedirectTo("Account/Lockout");
+            return;
+        }
+
+        Logger.LogWarning("Sign-in failed.");
+        errorMessage = "The email or password is wrong.";
+    }
+
+    private sealed class InputModel
+    {
+        [Required]
+        [EmailAddress]
+        public string Email { get; set; } = "";
+
+        [Required]
+        [DataType(DataType.Password)]
+        public string Password { get; set; } = "";
+
+        public bool RememberMe { get; set; }
+    }
+}

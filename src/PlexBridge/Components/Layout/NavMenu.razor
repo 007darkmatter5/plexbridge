@@ -1,0 +1,42 @@
+@inject AdminAccountService Accounts
+
+<MudNavMenu>
+    <AuthorizeView>
+        <Authorized>
+            <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard">Dashboard</MudNavLink>
+            <MudNavLink Href="migrate" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.SwapHoriz">Migrate</MudNavLink>
+            <MudNavLink Href="plex" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Link">Plex account</MudNavLink>
+            <MudNavLink Href="account/password" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Lock">Password</MudNavLink>
+            <MudDivider Class="my-2" />
+            <MudText Typo="Typo.caption" Class="px-4 pb-2 d-block">@context.User.Identity?.Name</MudText>
+            <form action="Account/Logout" method="post">
+                <AntiforgeryToken />
+                <input type="hidden" name="returnUrl" value="" />
+                <button type="submit" class="mud-nav-link mud-ripple">
+                    <MudIcon Icon="@Icons.Material.Filled.Logout" Class="mr-3" /> Log out
+                </button>
+            </form>
+        </Authorized>
+        <NotAuthorized>
+            <MudNavLink Href="Account/Login" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Login">Log in</MudNavLink>
+            @if (!_hasAccount)
+            {
+                <MudNavLink Href="Account/Register" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.PersonAdd">Create admin account</MudNavLink>
+            }
+        </NotAuthorized>
+    </AuthorizeView>
+</MudNavMenu>
+<MudText Typo="Typo.caption" Class="px-4 pt-3 d-block" Style="color: var(--mud-palette-text-disabled)">PlexBridge @AppVersion</MudText>
+<MudText Typo="Typo.caption" Class="px-4 pb-3 d-block" Style="color: var(--mud-palette-text-disabled)">One-way migration</MudText>
+
+@code {
+    private bool _hasAccount = true;
+
+    private static readonly string AppVersion = (typeof(NavMenu).Assembly
+        .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+        .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion ?? "dev")
+        .Split('+')[0];
+
+    protected override async Task OnInitializedAsync()
+        => _hasAccount = await Accounts.HasAccountAsync();
+}

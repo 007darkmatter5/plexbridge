@@ -1,0 +1,518 @@
+@page "/plex"
+@attribute [Authorize]
+@implements IDisposable
+@inject PlexAccountService Account
+@inject PlexServerService Servers
+
+<PageTitle>Plex account · PlexBridge</PageTitle>
+
+<MudStack Spacing="3">
+    <div>
+        <div class="pb-kicker">Plex account</div>
+        <MudText Typo="Typo.h4" Class="mt-1">Find your servers</MudText>
+        <MudText Typo="Typo.body1" Class="mt-2" Style="max-width: 46rem">
+            PlexBridge sends you to Plex's own sign-in page. It never asks for your Plex password.
+            After you authorize it, PlexBridge can list the servers you own and check a few of their connection addresses, read only.
+        </MudText>
+    </div>
+
+    @if (_message is not null)
+    {
+        <MudAlert Severity="_severity">@_message</MudAlert>
+    }
+
+    @if (_link is null)
+    {
+        <MudProgressLinear Indeterminate="true" />
+    }
+    else if (!_link.Linked)
+    {
+        <MudPaper Class="pa-4" Outlined="true">
+            <MudStack Spacing="2">
+                <MudText Typo="Typo.h6">Not connected</MudText>
+                @if (_authorizeUrl is null)
+                {
+                    <MudText Typo="Typo.body2">Start authorization, then approve PlexBridge in the Plex window. This page waits here and does not receive your Plex password.</MudText>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="Start">Connect Plex account</MudButton>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2">Open Plex, sign in there, and allow PlexBridge. This page checks with Plex every few seconds until @(_expires?.ToLocalTime().ToString("t")) or you cancel.</MudText>
+                    <MudButton Href="@_authorizeUrl" Target="_blank" Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.OpenInNew">Authorize on Plex</MudButton>
+                    <MudButton Variant="Variant.Text" Disabled="_busy" OnClick="Cancel">Cancel</MudButton>
+                }
+            </MudStack>
+        </MudPaper>
+    }
+    else
+    {
+        <MudPaper Class="pa-4" Outlined="true">
+            <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+                <div>
+                    <MudText Typo="Typo.h6">@_link.Username</MudText>
+                    <MudText Typo="Typo.body2">Account token is stored encrypted and is not shown.</MudText>
+                </div>
+                <MudStack Row="true" Spacing="1">
+                    <MudButton Variant="Variant.Outlined" Disabled="_busy" OnClick="Discover">Find servers</MudButton>
+                    <MudButton Variant="Variant.Text" Color="Color.Error" Disabled="_busy" OnClick="Disconnect">Disconnect</MudButton>
+                </MudStack>
+            </MudStack>
+        </MudPaper>
+
+        @if (_servers.Count == 0)
+        {
+            <MudAlert Severity="Severity.Normal" Variant="Variant.Outlined">No owned servers loaded yet. Find servers after the account is connected.</MudAlert>
+        }
+
+        @foreach (var server in _servers)
+        {
+            <MudPaper Class="pa-4" Outlined="true" @key="server.ClientIdentifier">
+                <MudStack Spacing="2">
+                    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+                        <div>
+                            <MudText Typo="Typo.h6">@server.Name</MudText>
+                            <MudText Typo="Typo.caption">@server.Version</MudText>
+                        </div>
+                        @if (SessionFor(server.ClientIdentifier)?.Running == true)
+                        {
+                            <MudButton Variant="Variant.Text" Color="Color.Warning" OnClick="() => CancelCheck(server.ClientIdentifier)">Cancel check</MudButton>
+                        }
+                        else
+                        {
+                            <MudButton Variant="Variant.Outlined" Disabled="_busy" OnClick="() => Check(server)">Check connections</MudButton>
+                        }
+                    </MudStack>
+                    @if (SessionFor(server.ClientIdentifier) is { } session)
+                    {
+                        <MudText Typo="Typo.body2">@Progress(session)</MudText>
+                        @foreach (var row in session.Rows)
+                        {
+                            <MudPaper Class="pa-3" Outlined="true">
+                                <MudStack Spacing="1">
+                                    <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+                                        <MudChip T="string" Size="Size.Small" Color="@StatusColor(row.Status)">@StatusLabel(row.Status)</MudChip>
+                                        <MudText Typo="Typo.body2" Class="pb-path">@row.Uri</MudText>
+                                        @if (row.Local)
+                                        {
+                                            <MudChip T="string" Size="Size.Small" Variant="Variant.Text">Local</MudChip>
+                                        }
+                                        @if (row.Relay)
+                                        {
+                                            <MudChip T="string" Size="Size.Small" Variant="Variant.Text">Relay</MudChip>
+                                        }
+                                    </MudStack>
+                                    @if (row.Status == ConnectionCheckStatus.Testing)
+                                    {
+                                        <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(row.Detail) && row.Status != ConnectionCheckStatus.Testing)
+                                    {
+                                        <MudText Typo="Typo.caption">@row.Detail</MudText>
+                                    }
+                                    @if (!session.Running && row.Status is ConnectionCheckStatus.NotTested or ConnectionCheckStatus.Failed)
+                                    {
+                                        <MudButton Variant="Variant.Text" Disabled="_busy" OnClick="() => CheckOne(server, row)">Check this one</MudButton>
+                                    }
+                                    @if (row.Status == ConnectionCheckStatus.Verified)
+                                    {
+                                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="() => BeginUse(server, row.Uri)">Use this connection</MudButton>
+                                        @if (_pendingUse is not null && _pendingUse.Value.MachineId == server.ClientIdentifier && _pendingUse.Value.Uri == row.Uri)
+                                        {
+                                            <MudText Typo="Typo.body2">Choose a slot. A filled slot is not replaced until you confirm.</MudText>
+                                            <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
+                                                @for (var slot = 1; slot <= 2; slot++)
+                                                {
+                                                    var slotNumber = slot;
+                                                    var existing = _saved.FirstOrDefault(item => item.Slot == slotNumber);
+                                                    @if (existing is null)
+                                                    {
+                                                        <MudButton Variant="Variant.Outlined" Disabled="_busy" OnClick="() => Save(server, row.Uri, null, slotNumber, confirmReplace: false)">Save as server @slotNumber</MudButton>
+                                                    }
+                                                    else if (_confirmReplace == (server.ClientIdentifier, row.Uri, slotNumber))
+                                                    {
+                                                        <MudButton Variant="Variant.Filled" Color="Color.Error" Disabled="_busy" OnClick="() => Save(server, row.Uri, existing.Id, slotNumber, confirmReplace: true)">Confirm replace of @existing.Name</MudButton>
+                                                    }
+                                                    else
+                                                    {
+                                                        <MudButton Variant="Variant.Outlined" Color="Color.Warning" Disabled="_busy" OnClick="() => AskReplace(server.ClientIdentifier, row.Uri, slotNumber)">Replace server @slotNumber (@existing.Name)</MudButton>
+                                                    }
+                                                }
+                                            </MudStack>
+                                        }
+                                    }
+                                </MudStack>
+                            </MudPaper>
+                        }
+                        @if (!session.Running && session.Rows.Any(row => row.Status == ConnectionCheckStatus.NotTested))
+                        {
+                            <MudButton Variant="Variant.Outlined" Disabled="_busy" OnClick="() => CheckRemaining(server)">Check the ones not tested yet</MudButton>
+                        }
+                        @if (session.ShowNoneAnswered)
+                        {
+                            <MudAlert Severity="Severity.Warning">
+                                None of these listed addresses answered. Servers already saved on the dashboard were not changed.
+                                <MudLink Href="/">Keep using a Tailscale or LAN address there</MudLink>
+                                if you already have one that works.
+                            </MudAlert>
+                        }
+                    }
+                    else
+                    {
+                        @foreach (var connection in server.Connections)
+                        {
+                            <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+                                <MudText Typo="Typo.body2" Class="pb-path">@connection.Uri</MudText>
+                                @if (connection.Https)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">HTTPS</MudChip>
+                                }
+                                @if (connection.Local)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">Local</MudChip>
+                                }
+                                @if (connection.Relay)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">Relay</MudChip>
+                                }
+                            </MudStack>
+                        }
+                    }
+                </MudStack>
+            </MudPaper>
+        }
+    }
+
+    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">
+        You can still type a server URL on the dashboard. A bare hostname gets https:// and port 32400. Nothing here writes to Plex.
+    </MudAlert>
+</MudStack>
+
+@code {
+    private PlexLinkView? _link;
+    private string? _authorizeUrl;
+    private DateTimeOffset? _expires;
+    private string? _message;
+    private Severity _severity = Severity.Info;
+    private bool _busy;
+    private IReadOnlyList<DiscoveredServerView> _servers = [];
+    private IReadOnlyList<PlexServerSummary> _saved = [];
+    private readonly Dictionary<string, ConnectionCheckSession> _sessions = new();
+    private readonly Dictionary<string, CancellationTokenSource> _checks = new();
+    private (string MachineId, string Uri)? _pendingUse;
+    private (string MachineId, string Uri, int Slot)? _confirmReplace;
+    private CancellationTokenSource? _poll;
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        _link = await Account.GetLinkAsync();
+        _saved = await Servers.ListAsync();
+    }
+
+    private async Task Start()
+    {
+        _busy = true;
+        _message = null;
+        try
+        {
+            var pin = await Account.StartPinAsync();
+            _authorizeUrl = pin.AuthorizeUrl;
+            _expires = pin.ExpiresUtc;
+            _poll?.Cancel();
+            _poll = new CancellationTokenSource();
+            _ = Poll(_poll.Token);
+        }
+        catch (PlexBridgeException exception)
+        {
+            Show(Severity.Error, exception.Message);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task Poll(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+                var result = await Account.PollPinAsync(cancellationToken);
+                Show(result.State == PlexPinState.Failed ? Severity.Error : Severity.Info, result.Message);
+                if (result.State is PlexPinState.Authorized or PlexPinState.Expired or PlexPinState.Canceled or PlexPinState.Failed)
+                {
+                    _authorizeUrl = null;
+                    if (result.Link is not null)
+                        _link = result.Link;
+                    await InvokeAsync(StateHasChanged);
+                    break;
+                }
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task Cancel()
+    {
+        _poll?.Cancel();
+        await Account.CancelPinAsync();
+        _authorizeUrl = null;
+        Show(Severity.Info, "Authorization canceled.");
+    }
+
+    private async Task Discover()
+    {
+        _busy = true;
+        try
+        {
+            _servers = await Account.DiscoverAsync();
+            _sessions.Clear();
+            _pendingUse = null;
+            _confirmReplace = null;
+            Show(Severity.Info, _servers.Count == 0 ? "Plex returned no owned servers." : $"{_servers.Count} owned {( _servers.Count == 1 ? "server" : "servers")}.");
+        }
+        catch (PlexBridgeException exception)
+        {
+            Show(Severity.Error, exception.Message);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task Check(DiscoveredServerView server)
+    {
+        if (_sessions.TryGetValue(server.ClientIdentifier, out var running) && running.Running)
+            return;
+        CancelCheck(server.ClientIdentifier);
+        var cts = new CancellationTokenSource();
+        _checks[server.ClientIdentifier] = cts;
+        _pendingUse = null;
+        _confirmReplace = null;
+        try
+        {
+            var session = await Account.BeginCheckAsync(server.ClientIdentifier, cts.Token);
+            _sessions[server.ClientIdentifier] = session;
+            await InvokeAsync(StateHasChanged);
+            await Task.Yield();
+            await ConnectionCheckRunner.RunAsync(
+                session,
+                (uri, token) => Account.ProbeCandidateAsync(server.ClientIdentifier, uri, token),
+                () => InvokeAsync(StateHasChanged),
+                cts.Token);
+            if (session.ShowNoneAnswered && !cts.IsCancellationRequested)
+                Show(Severity.Warning, $"No listed address for {server.Name} answered. Servers already saved on the dashboard were not changed.");
+            else if (session.AnyVerified)
+                Show(Severity.Info, $"{server.Name}: use a verified connection below. Failed addresses do not block the ones that worked.");
+        }
+        catch (OperationCanceledException)
+        {
+            FinishCheck(server.ClientIdentifier);
+        }
+        catch (PlexBridgeException exception)
+        {
+            FinishCheck(server.ClientIdentifier);
+            Show(Severity.Error, exception.Message);
+        }
+        catch (Exception)
+        {
+            FinishCheck(server.ClientIdentifier);
+            Show(Severity.Error, "The check stopped before every address finished.");
+        }
+    }
+
+    private void CancelCheck(string machineId)
+    {
+        if (_checks.TryGetValue(machineId, out var cts))
+            cts.Cancel();
+    }
+
+    private async Task CheckOne(DiscoveredServerView server, ConnectionCheckRow row)
+    {
+        if (SessionFor(server.ClientIdentifier)?.Running == true)
+            return;
+        row.Status = ConnectionCheckStatus.Testing;
+        row.Detail = null;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            var attempt = await Account.ProbeCandidateAsync(server.ClientIdentifier, row.Uri);
+            row.Status = attempt.Outcome == "Reachable" ? ConnectionCheckStatus.Verified : ConnectionCheckStatus.Failed;
+            row.Detail = string.IsNullOrWhiteSpace(attempt.Detail) ? attempt.Outcome : attempt.Outcome + ". " + attempt.Detail;
+        }
+        catch (OperationCanceledException)
+        {
+            row.Status = ConnectionCheckStatus.Canceled;
+            row.Detail = "Not checked.";
+        }
+        catch (PlexBridgeException exception)
+        {
+            row.Status = ConnectionCheckStatus.Failed;
+            row.Detail = exception.Message;
+        }
+        catch (Exception)
+        {
+            row.Status = ConnectionCheckStatus.Failed;
+            row.Detail = "The check stopped before this address finished.";
+        }
+        finally
+        {
+            if (row.Status == ConnectionCheckStatus.Testing)
+            {
+                row.Status = ConnectionCheckStatus.Failed;
+                row.Detail = "The check stopped before this address finished.";
+            }
+
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task CheckRemaining(DiscoveredServerView server)
+    {
+        var session = SessionFor(server.ClientIdentifier);
+        if (session is null || session.Running)
+            return;
+        var queued = 0;
+        foreach (var row in session.Rows.Where(row => row.Status == ConnectionCheckStatus.NotTested))
+        {
+            if (queued >= PlexConnectionOrder.AutomaticBatchSize)
+                break;
+            row.Status = ConnectionCheckStatus.Queued;
+            row.Detail = null;
+            queued++;
+        }
+        if (queued == 0)
+            return;
+        var cts = new CancellationTokenSource();
+        _checks[server.ClientIdentifier] = cts;
+        session.Running = true;
+        await InvokeAsync(StateHasChanged);
+        await ConnectionCheckRunner.RunAsync(
+            session,
+            (uri, token) => Account.ProbeCandidateAsync(server.ClientIdentifier, uri, token),
+            () => InvokeAsync(StateHasChanged),
+            cts.Token);
+    }
+
+    private void BeginUse(DiscoveredServerView server, string uri)
+    {
+        _pendingUse = (server.ClientIdentifier, uri);
+        _confirmReplace = null;
+    }
+
+    private void AskReplace(string machineId, string uri, int slot)
+        => _confirmReplace = (machineId, uri, slot);
+
+    private async Task Save(DiscoveredServerView server, string uri, int? replaceId, int slot, bool confirmReplace)
+    {
+        if (replaceId is not null && !confirmReplace)
+        {
+            AskReplace(server.ClientIdentifier, uri, slot);
+            return;
+        }
+        _busy = true;
+        try
+        {
+            await Account.SaveDiscoveredAsync(server.ClientIdentifier, uri, replaceId, server.Name, slot);
+            _saved = await Servers.ListAsync();
+            _pendingUse = null;
+            _confirmReplace = null;
+            Show(Severity.Success, $"Saved {server.Name} as server {slot}. Open the dashboard to refresh its library inventory.");
+        }
+        catch (PlexBridgeException exception)
+        {
+            Show(Severity.Error, exception.Message);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void FinishCheck(string machineId)
+    {
+        if (!_sessions.TryGetValue(machineId, out var session))
+            return;
+        session.Settle();
+        session.Running = false;
+    }
+
+    private ConnectionCheckSession? SessionFor(string machineId)
+        => _sessions.TryGetValue(machineId, out var session) ? session : null;
+
+    private static string Progress(ConnectionCheckSession session)
+    {
+        if (session.Rows.Count == 0)
+            return "Plex did not list a connection to check.";
+        var testing = session.Rows.FindIndex(row => row.Status == ConnectionCheckStatus.Testing);
+        if (session.Running && testing >= 0)
+            return $"Checking {testing + 1} of {session.Rows.Count}. The page stays usable.";
+        var waiting = session.Rows.Count(row => row.Status == ConnectionCheckStatus.NotTested);
+        if (waiting > 0)
+            return $"{session.Finished} of {session.Rows.Count} checked. {waiting} stayed on the list and were not tested automatically.";
+        return $"{session.Finished} of {session.Rows.Count} checked.";
+    }
+
+    private static string StatusLabel(ConnectionCheckStatus status) => status switch
+    {
+        ConnectionCheckStatus.Queued => "Queued",
+        ConnectionCheckStatus.Testing => "Testing",
+        ConnectionCheckStatus.Verified => "Verified",
+        ConnectionCheckStatus.Failed => "Failed",
+        ConnectionCheckStatus.NotTested => "Not tested",
+        _ => "Canceled"
+    };
+
+    private static Color StatusColor(ConnectionCheckStatus status) => status switch
+    {
+        ConnectionCheckStatus.Verified => Color.Success,
+        ConnectionCheckStatus.Failed => Color.Error,
+        ConnectionCheckStatus.Testing => Color.Info,
+        ConnectionCheckStatus.Canceled => Color.Default,
+        _ => Color.Default
+    };
+
+    private async Task Disconnect()
+    {
+        _busy = true;
+        try
+        {
+            await Account.DisconnectAsync();
+            _servers = [];
+            _sessions.Clear();
+            foreach (var cts in _checks.Values)
+                cts.Cancel();
+            _checks.Clear();
+            _link = new PlexLinkView(false, null);
+            Show(Severity.Info, "Plex account disconnected. Saved server tokens were not removed.");
+        }
+        catch (PlexBridgeException exception)
+        {
+            Show(Severity.Error, exception.Message);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void Show(Severity severity, string message)
+    {
+        _severity = severity;
+        _message = message;
+    }
+
+    public void Dispose()
+    {
+        _poll?.Cancel();
+        foreach (var cts in _checks.Values)
+            cts.Cancel();
+    }
+}

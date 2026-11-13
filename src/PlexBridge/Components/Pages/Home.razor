@@ -1,0 +1,88 @@
+@page "/"
+@attribute [Authorize]
+@inject PlexServerService Servers
+
+<PageTitle>Dashboard · PlexBridge</PageTitle>
+
+<MudStack Spacing="4">
+    <div>
+        <div class="pb-kicker">Milestone 1</div>
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap" Class="mt-1">
+            <MudText Typo="Typo.h4">Two servers</MudText>
+            <MudChip T="string" Variant="Variant.Outlined" Color="Color.Info" Icon="@Icons.Material.Filled.Visibility">Dashboard does not write</MudChip>
+        </MudStack>
+        <MudText Typo="Typo.body1" Class="mt-2" Style="max-width: 46rem">
+            PlexBridge keeps the two servers you saved, including a Tailscale address and its encrypted token.
+            Copy watched status, progress, and ratings from one to the other after a preview. Account discovery is optional and does not replace those URLs.
+        </MudText>
+        <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap" Class="mt-2">
+            <MudButton Href="migrate" Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.SwapHoriz">Migrate</MudButton>
+            <MudButton Href="plex" Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Link">Plex account</MudButton>
+        </MudStack>
+    </div>
+
+    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+        Matches use IMDb, TMDB, TVDB, and Plex content ids. A ratingKey or a file path is not an identity across servers.
+        Collections and server settings are not copied yet.
+    </MudAlert>
+
+    @if (_error is not null)
+    {
+        <MudAlert Severity="Severity.Error">@_error</MudAlert>
+    }
+
+    <MudGrid Spacing="2">
+        <MudItem xs="6" sm="3"><Stat Label="Servers" Value="@_servers.Count.ToString()" Hint="of 2" /></MudItem>
+        <MudItem xs="6" sm="3"><Stat Label="Libraries" Value="@_servers.Sum(s => s.Libraries.Count).ToString()" Hint="last refresh" /></MudItem>
+        <MudItem xs="6" sm="3"><Stat Label="Items" Value="@_servers.Sum(s => s.Libraries.Sum(l => l.ItemCount)).ToString()" Hint="counted, not copied" /></MudItem>
+        <MudItem xs="6" sm="3"><Stat Label="Online" Value="@_servers.Count(s => s.Status == "Online").ToString()" Hint="last test" /></MudItem>
+    </MudGrid>
+
+    @if (_loading)
+    {
+        <MudProgressLinear Indeterminate="true" />
+        <MudSkeleton Height="180px" />
+    }
+    else if (_servers.Count == 0)
+    {
+        <MudAlert Severity="Severity.Normal" Variant="Variant.Outlined">
+            No servers are saved. Add both below when you have their URLs and tokens. Counts stay at zero until a refresh succeeds.
+        </MudAlert>
+    }
+
+    <MudGrid Spacing="3">
+        @foreach (var slotNumber in new[] { 1, 2 })
+        {
+            var server = _servers.FirstOrDefault(item => item.Slot == slotNumber);
+            <MudItem xs="12" md="6" @key="server?.Id ?? -slotNumber">
+                <ServerSlot Server="server" Slot="slotNumber" OnChanged="Load" />
+            </MudItem>
+        }
+    </MudGrid>
+</MudStack>
+
+@code {
+    private bool _loading = true;
+    private string? _error;
+    private IReadOnlyList<PlexServerSummary> _servers = [];
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        _loading = _servers.Count == 0;
+        _error = null;
+        try
+        {
+            _servers = await Servers.ListAsync();
+        }
+        catch (Exception)
+        {
+            _error = "The saved servers could not be loaded.";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

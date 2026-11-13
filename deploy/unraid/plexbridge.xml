@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Container version="2">
+  <Name>PlexBridge</Name>
+  <Repository>ghcr.io/007darkmatter5/plexbridge:latest</Repository>
+  <Registry>https://github.com/007darkmatter5/plexbridge/pkgs/container/plexbridge</Registry>
+  <Network>bridge</Network>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/007darkmatter5/plexbridge/issues</Support>
+  <Project>https://github.com/007darkmatter5/plexbridge</Project>
+  <ReadMe>https://github.com/007darkmatter5/plexbridge#unraid</ReadMe>
+  <TemplateURL>https://raw.githubusercontent.com/007darkmatter5/unraid-templates/main/templates/plexbridge.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/007darkmatter5/plexbridge/main/docs/images/icon.png</Icon>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <Overview>PlexBridge copies watched status, stop time, ratings, and regular playlists from one Plex server to another. Preview shows both sides in one table. Nothing is written until you choose the changes and confirm Apply. Tokens are encrypted with the keys in the appdata folder and are not shown again.
+
+The first account you create is the admin, and further sign-ups stay closed. On an empty appdata folder the database is created and migrated at startup, then the register page is the first thing you see.
+
+Smart playlists, collections, and server settings are not copied. A Plex ratingKey or a file path is not an identity across servers. To reach PlexBridge from outside your network, put it behind a reverse proxy with HTTPS and WebSockets enabled, and set "Behind a reverse proxy" to true.</Overview>
+  <Changes>Release notes: https://github.com/007darkmatter5/plexbridge/releases</Changes>
+  <Category>MediaServer:Other Tools:</Category>
+  <ExtraSearchTerms>plex migrate watched ratings playlists two servers media</ExtraSearchTerms>
+  <License>MIT</License>
+  <Date>2026-11-13</Date>
+  <Config Name="Web UI port" Target="8080" Default="8080" Mode="tcp" Description="Port for the PlexBridge web interface." Type="Port" Display="always" Required="true" Mask="false">8080</Config>
+  <Config Name="Appdata" Target="/config" Default="/mnt/user/appdata/plexbridge" Mode="rw" Description="SQLite database, data-protection keys, and logs. Back this folder up. Losing the keys makes saved Plex tokens unreadable." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/plexbridge</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Description="User ID PlexBridge runs as. It owns the appdata folder." Type="Variable" Display="advanced" Required="true" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Description="Group ID PlexBridge runs as." Type="Variable" Display="advanced" Required="true" Mask="false">100</Config>
+  <Config Name="Timezone" Target="TZ" Default="Etc/UTC" Description="Timezone for the container clock and log timestamps, for example America/Chicago." Type="Variable" Display="always" Required="false" Mask="false">Etc/UTC</Config>
+  <Config Name="Behind a reverse proxy" Target="ASPNETCORE_FORWARDEDHEADERS_ENABLED" Default="false" Description="Set to true when a reverse proxy (SWAG, Nginx Proxy Manager, Traefik) handles HTTPS in front of PlexBridge. The proxy must allow WebSockets." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+</Container>

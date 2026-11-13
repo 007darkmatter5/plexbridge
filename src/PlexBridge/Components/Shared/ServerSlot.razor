@@ -1,0 +1,281 @@
+@inject PlexServerService Servers
+
+<MudPaper Class="pa-4 pb-slot" Outlined="true" Elevation="0">
+    <MudStack Spacing="2">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+            <MudText Typo="Typo.overline">Server @_slot</MudText>
+            @if (Server is not null)
+            {
+                <MudChip T="string" Size="Size.Small" Color="@StatusColor" Variant="Variant.Filled">@Server.Status</MudChip>
+            }
+        </MudStack>
+
+        @if (Server is null && !_editing)
+        {
+            <MudText Typo="Typo.h6">No server yet</MudText>
+            <MudText Typo="Typo.body2" Style="color: var(--mud-palette-text-secondary)">
+                Add the URL and an X-Plex-Token. The token is encrypted and is not shown again.
+            </MudText>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="StartEdit">Add server</MudButton>
+        }
+        else if (!_editing && Server is not null)
+        {
+            <MudText Typo="Typo.h6">@Server.Name</MudText>
+            @if (!string.IsNullOrWhiteSpace(Server.FriendlyName))
+            {
+                <MudText Typo="Typo.body2">@Server.FriendlyName</MudText>
+            }
+            <MudText Typo="Typo.body2" Class="pb-path">@Server.BaseUrl</MudText>
+            <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Icon="@Icons.Material.Filled.Visibility">Read-only</MudChip>
+                @if (Server.HasToken && !Server.TokenUnreadable)
+                {
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Icon="@Icons.Material.Filled.Key">Token saved</MudChip>
+                }
+                @if (!string.IsNullOrWhiteSpace(Server.ServerVersion))
+                {
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text">@Server.ServerVersion</MudChip>
+                }
+            </MudStack>
+            @if (Server.TokenUnreadable)
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true">The saved token can't be read. Enter it again. This usually means the keys folder changed.</MudAlert>
+            }
+            @if (!string.IsNullOrWhiteSpace(Server.LastError))
+            {
+                <MudAlert Severity="Severity.Error" Dense="true">@Server.LastError</MudAlert>
+            }
+            @if (Server.Libraries.Count == 0)
+            {
+                <MudText Typo="Typo.body2">No inventory yet. Test the connection, then refresh the libraries.</MudText>
+            }
+            else
+            {
+                <MudStack Spacing="1">
+                    @foreach (var library in Server.Libraries)
+                    {
+                        <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+                            <MudStack Spacing="0">
+                                <MudText Typo="Typo.body2"><b>@library.Title</b> · @LibraryKind(library.Type)</MudText>
+                                @foreach (var path in library.Locations)
+                                {
+                                    <MudText Typo="Typo.caption" Class="pb-path">@path</MudText>
+                                }
+                            </MudStack>
+                            <MudText Typo="Typo.subtitle1">@library.ItemCount</MudText>
+                        </MudStack>
+                    }
+                </MudStack>
+                <MudLink Href="@($"servers/{Server.Id}")">Open inventory</MudLink>
+            }
+            @if (Server.LastCheckedUtc is not null)
+            {
+                <MudText Typo="Typo.caption">Checked @Server.LastCheckedUtc.Value.ToLocalTime().ToString("g")</MudText>
+            }
+            <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
+                <MudButton Variant="Variant.Outlined" Disabled="_busy" OnClick="TestSaved">Test connection</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy || !Server.HasToken || Server.TokenUnreadable" OnClick="Refresh">Refresh inventory</MudButton>
+                <MudButton Variant="Variant.Text" Disabled="_busy" OnClick="StartEdit">Edit</MudButton>
+                @if (!_confirmRemove)
+                {
+                    <MudButton Variant="Variant.Text" Color="Color.Error" Disabled="_busy" OnClick="() => _confirmRemove = true">Remove</MudButton>
+                }
+                else
+                {
+                    <MudButton Variant="Variant.Filled" Color="Color.Error" Disabled="_busy" OnClick="Remove">Confirm remove</MudButton>
+                }
+            </MudStack>
+        }
+        else
+        {
+            <MudText Typo="Typo.h6">@(Server is null ? "Add a server" : "Edit server")</MudText>
+            <MudTextField @bind-Value="_name" Label="Name" Variant="Variant.Outlined" MaxLength="80" Immediate="true" Disabled="_busy" />
+            <MudTextField @bind-Value="_baseUrl" Label="Server URL" Variant="Variant.Outlined" Placeholder="host, https://host, or https://host:32400" Immediate="true" Disabled="_busy" HelperText="A name without https:// is completed for you. If you leave the port off, 32400 is used because that is the Plex server port. Use :443 only when a reverse proxy serves that name." />
+            @if (AddressNotice is { } notice)
+            {
+                <MudAlert Severity="Severity.Info" Dense="true">@notice</MudAlert>
+            }
+            <MudTextField @bind-Value="_token" Label="Plex token" Variant="Variant.Outlined" InputType="InputType.Password" Immediate="true" Disabled="_busy"
+                          HelperText="@(Server is null ? "Paste an X-Plex-Token. It is stored encrypted and is not shown again." : "Leave this blank to keep the saved token.")"
+                          UserAttributes="@_tokenAttributes" />
+            @if (!string.IsNullOrWhiteSpace(_message))
+            {
+                <MudAlert Severity="_messageSeverity" Dense="true">@_message</MudAlert>
+            }
+            <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
+                <MudButton Variant="Variant.Outlined" Disabled="_busy" OnClick="TestDraft">Test connection</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy" OnClick="Save">Save</MudButton>
+                <MudButton Variant="Variant.Text" Disabled="_busy" OnClick="Cancel">Cancel</MudButton>
+            </MudStack>
+        }
+
+        @if (_busy)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+        }
+    </MudStack>
+</MudPaper>
+
+@code {
+    [Parameter] public PlexServerSummary? Server { get; set; }
+    [Parameter] public int Slot { get; set; }
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private static readonly Dictionary<string, object> _tokenAttributes = new()
+    {
+        ["autocomplete"] = "off",
+        ["spellcheck"] = "false",
+        ["autocapitalize"] = "off",
+        ["data-1p-ignore"] = "true",
+        ["data-lpignore"] = "true"
+    };
+
+    private bool _editing;
+    private bool _busy;
+    private bool _confirmRemove;
+    private string _name = "";
+    private string _baseUrl = "";
+    private string _token = "";
+    private string? _message;
+    private Severity _messageSeverity = Severity.Info;
+    private int _slot;
+
+    protected override void OnParametersSet()
+    {
+        _slot = Slot;
+        if (!_editing)
+        {
+            _name = Server?.Name ?? "";
+            _baseUrl = Server?.BaseUrl ?? "";
+        }
+    }
+
+    private void StartEdit()
+    {
+        _editing = true;
+        _confirmRemove = false;
+        _message = null;
+        _token = "";
+        _name = Server?.Name ?? "";
+        _baseUrl = Server?.BaseUrl ?? "";
+    }
+
+    private void Cancel()
+    {
+        _editing = false;
+        _token = "";
+        _message = null;
+        _name = Server?.Name ?? "";
+        _baseUrl = Server?.BaseUrl ?? "";
+    }
+
+    private string? AddressNotice
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(_baseUrl))
+                return null;
+            var normalized = PlexServerUrl.Normalize(_baseUrl);
+            return normalized.Ok ? normalized.Notice : null;
+        }
+    }
+
+    private void ApplyAddress()
+    {
+        var normalized = PlexServerUrl.Normalize(_baseUrl);
+        if (normalized.Ok)
+            _baseUrl = normalized.Normalized;
+    }
+
+    private async Task Save()
+    {
+        ApplyAddress();
+        await Run(async token =>
+        {
+            await Servers.SaveAsync(Server?.Id, _name, _baseUrl, _token, token, Server?.Slot is 1 or 2 ? Server.Slot : Slot);
+            _token = "";
+            _editing = false;
+            _message = null;
+            await OnChanged.InvokeAsync();
+        });
+    }
+
+    private Task TestDraft() => Run(async token =>
+    {
+        ApplyAddress();
+        var result = await Servers.TestAsync(Server?.Id, _baseUrl, _token, token);
+        Show(result.Ok, result.Message);
+    });
+
+    private Task TestSaved() => Run(async token =>
+    {
+        if (Server is null)
+            return;
+        var result = await Servers.TestAsync(Server.Id, Server.BaseUrl, null, token);
+        Show(result.Ok, result.Message);
+        await OnChanged.InvokeAsync();
+    });
+
+    private Task Refresh() => Run(async token =>
+    {
+        if (Server is null)
+            return;
+        await Servers.RefreshInventoryAsync(Server.Id, token);
+        _message = null;
+        await OnChanged.InvokeAsync();
+    });
+
+    private Task Remove() => Run(async token =>
+    {
+        if (Server is null)
+            return;
+        await Servers.DeleteAsync(Server.Id, token);
+        _confirmRemove = false;
+        await OnChanged.InvokeAsync();
+    });
+
+    private async Task Run(Func<CancellationToken, Task> action)
+    {
+        _busy = true;
+        _message = null;
+        try
+        {
+            await action(CancellationToken.None);
+        }
+        catch (PlexBridgeException exception)
+        {
+            Show(false, exception.Message);
+        }
+        catch (Exception)
+        {
+            Show(false, "That action failed. The Plex token was not included in the error.");
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void Show(bool ok, string message)
+    {
+        _message = message;
+        _messageSeverity = ok ? Severity.Success : Severity.Error;
+    }
+
+    private static string LibraryKind(string type) => type.ToLowerInvariant() switch
+    {
+        "movie" => "Movies",
+        "show" => "TV",
+        "artist" => "Music",
+        "photo" => "Photos",
+        _ => type
+    };
+
+    private Color StatusColor => Server?.Status switch
+    {
+        "Online" => Color.Success,
+        "Token rejected" => Color.Warning,
+        "Unreachable" or "Error" => Color.Error,
+        _ => Color.Default
+    };
+}

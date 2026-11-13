@@ -1,0 +1,970 @@
+@page "/migrate"
+@attribute [Authorize]
+@implements IDisposable
+@inject MigrationService Migration
+@inject MigrationPlexUsers PlexUsers
+@inject PlexServerService Servers
+@inject UserPreferences Preferences
+@inject IDialogService Dialogs
+
+<PageTitle>Migrate · PlexBridge</PageTitle>
+
+<MudStack Spacing="4">
+    <div>
+        <div class="pb-kicker">One-way migration</div>
+        <MudText Typo="Typo.h4" Class="mt-1">Copy one server onto the other</MudText>
+        <MudText Typo="Typo.subtitle1" Class="mt-1">Migrating for: @_plexUserName</MudText>
+        <MudText Typo="Typo.body1" Class="mt-2" Style="max-width: 46rem">
+            Pick the server you are leaving and the server you are keeping. PlexBridge matches movies, episodes, and tracks by IMDb, TMDB, TVDB, and Plex content ids.
+            A file path or a Plex ratingKey is never a match. Nothing is written until you confirm the preview.
+        </MudText>
+    </div>
+
+    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+        Plex cannot import the original watch date. A matched item can be marked watched, given a stop time, or given a rating.
+        Plex's own watch sync only covers items it has already matched, which is why unmatched items are skipped and listed.
+        Source values replace destination values when both exist.
+    </MudAlert>
+
+    @if (_error is not null)
+    {
+        <MudAlert Severity="Severity.Error">@_error</MudAlert>
+    }
+    @if (_info is not null)
+    {
+        <MudAlert Severity="Severity.Success">@_info</MudAlert>
+    }
+
+    @if (_loading)
+    {
+        <MudProgressLinear Indeterminate="true" />
+    }
+    else if (_servers.Count < 2)
+    {
+        <MudAlert Severity="Severity.Warning">Add both servers on the dashboard first. This page uses the URLs and tokens already saved there.</MudAlert>
+    }
+    else
+    {
+        <MudSelect T="string" Value="_plexUserKey" ValueChanged="ChoosePlexUser" Label="Plex user" HelperText="@_plexHint" Disabled="_running || _applying">
+            <MudSelectItem T="string" Value="@("")">Saved server tokens</MudSelectItem>
+            @foreach (var person in _plexUsers)
+            {
+                var key = person.Key;
+                <MudSelectItem T="string" Value="@key">@person.Name@(person.Admin ? " · admin" : "")@(person.Protected ? " · PIN" : "")@(person.Guest ? " · other account" : "")</MudSelectItem>
+            }
+        </MudSelect>
+        <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
+            <MudButton Variant="Variant.Text" Disabled="_running || _applying || _guestUrl is not null" OnClick="StartGuest">Sign in another Plex account</MudButton>
+            @if (_guestUrl is not null)
+            {
+                <MudButton Href="@_guestUrl" Target="_blank" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.OpenInNew">Authorize on Plex</MudButton>
+                <MudButton Variant="Variant.Text" OnClick="CancelGuest">Cancel</MudButton>
+            }
+        </MudStack>
+
+        <MudGrid Spacing="2">
+            <MudItem xs="12" md="6">
+                <MudSelect T="int" Value="_sourceId" ValueChanged="OnSource" Label="Source" HelperText="Copied from here" Disabled="_running">
+                    @foreach (var server in _servers)
+                    {
+                        var id = server.Id;
+                        <MudSelectItem T="int" Value="@id">@Label(server)</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudSelect T="int" Value="_destinationId" ValueChanged="OnDestination" Label="Destination" HelperText="Changed only after you confirm" Disabled="_running">
+                    @foreach (var server in _servers)
+                    {
+                        var id = server.Id;
+                        <MudSelectItem T="int" Value="@id">@Label(server)</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+        </MudGrid>
+
+        <MudPaper Class="pa-4" Outlined="true">
+            <MudStack Spacing="1">
+                <MudText Typo="Typo.subtitle1">What to copy</MudText>
+                <MudCheckBox T="bool" Value="_watched" ValueChanged="ToggleWatched" Disabled="_running" Label="Watched status" />
+                <MudCheckBox T="bool" Value="_progress" ValueChanged="ToggleProgress" Disabled="_running" Label="Viewing progress" />
+                <MudCheckBox T="bool" Value="_ratings" ValueChanged="ToggleRatings" Disabled="_running" Label="Your ratings" />
+                <MudCheckBox T="bool" Value="_playlists" ValueChanged="TogglePlaylists" Disabled="_running" Label="Playlists" />
+                <MudText Typo="Typo.caption">Playlists are recreated from matched items. Smart playlists are listed and skipped. Items that exist only on the destination are left in place.</MudText>
+                <MudDivider Class="my-2" />
+                <MudCheckBox T="bool" Value="false" Disabled="true" Label="Collections" />
+                <MudCheckBox T="bool" Value="false" Disabled="true" Label="Server settings (transcoder and remote streaming)" />
+                <MudText Typo="Typo.caption">Coming next. Collections and server settings cannot be applied.</MudText>
+            </MudStack>
+        </MudPaper>
+
+        <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap" AlignItems="AlignItems.Center">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_running || _showProgress || _applying || !CanPreview" OnClick="Preview">@(_running ? "Preview running…" : "Preview")</MudButton>
+            @if (_running && _jobId is not null)
+            {
+                <form method="post" action="migrate/cancel">
+                    <AntiforgeryToken />
+                    <input type="hidden" name="jobId" value="@_jobId" />
+                    <MudButton Variant="Variant.Outlined" Color="Color.Warning" ButtonType="ButtonType.Submit">Cancel</MudButton>
+                </form>
+            }
+        </MudStack>
+        @if (_running || _showProgress)
+        {
+            var progressRows = PreviewProgress.Rows(_phases);
+            var meter = PreviewProgress.Meter(progressRows);
+            <MudPaper Class="pa-3" Outlined="true">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                    <MudText Typo="Typo.subtitle1">@(_running ? "Preview running…" : "Preview finished") @_elapsed</MudText>
+                    <MudText Typo="Typo.caption">@meter.Done of @meter.Total</MudText>
+                </MudStack>
+                <MudProgressLinear Class="my-2" Rounded="true" Size="Size.Small" Indeterminate="@(_running && meter.Total == 0)" Value="@(meter.Total == 0 ? 0 : meter.Done * 100d / meter.Total)" Max="100" Color="Color.Primary" />
+                <table class="pb-progress">
+                    <colgroup>
+                        <col class="library" />
+                        <col class="side" />
+                        <col class="side" />
+                    </colgroup>
+                    <thead>
+                        <tr>
+                            <th>Library</th>
+                            <th>Source</th>
+                            <th>Destination</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in progressRows)
+                        {
+                            <tr>
+                                <td>
+                                    <span class="pb-progress-name">
+                                        <MudIcon Icon="@LibraryIcon(row.Label)" Size="Size.Small" />
+                                        @row.Label
+                                    </span>
+                                </td>
+                                <td>@ProgressCell(row.Source)</td>
+                                <td>@ProgressCell(row.Destination)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </MudPaper>
+        }
+    }
+
+    @if (!_showProgress && _jobId is not null && (_running || _sections.Count > 0 || _summary is not null))
+    {
+        <div class="pb-toolbar">
+            <div class="pb-toolbar-main">
+                <MudToggleGroup T="string" Value="_view" ValueChanged="SetView" Size="Size.Small" Color="Color.Primary" CheckMark="false" Outlined="true" Delimiters="true" SelectionMode="SelectionMode.SingleSelection">
+                    <MudToggleItem T="string" Value="@UserPreferences.ShowAll" Text="All" />
+                    <MudToggleItem T="string" Value="@UserPreferences.Mismatches" Text="Mismatches" />
+                </MudToggleGroup>
+                <MudSelect T="string" Value="_filter" ValueChanged="ChangeFilter" Label="Result" Margin="Margin.Dense" Variant="Variant.Outlined" Dense="true" Class="pb-filter">
+                    <MudSelectItem T="string" Value="@("mismatches")">Mismatches</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("all")">All</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("out-of-date")">Out of date @Count(_summary?.OutOfDateItems)</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("conflict")">Conflict @Count(_summary?.ConflictItems)</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("missing")">Missing @Count(_summary?.UnmatchedSource)</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("up-to-date")">Matching @Count(_summary?.UpToDateItems)</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("only-on-destination")">Only on destination @Count(_summary?.UnmatchedDestination)</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("hide-only-on-destination")">Hide only on destination</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("skipped")">Skipped @Count(_summary?.OtherSkipped)</MudSelectItem>
+                </MudSelect>
+                <MudTextField T="string" Value="_search" ValueChanged="ChangeSearch" Label="Search title" Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Class="pb-search" />
+            </div>
+            <div class="pb-toolbar-actions">
+                @if (!_running)
+                {
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">@_selected.Count pending</MudChip>
+                    <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="_applying" OnClick="MakeFilterMatch">Make all match</MudButton>
+                    <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="_applying || _selected.Count == 0" OnClick="ClearPending">Clear</MudButton>
+                }
+                <MudText Typo="Typo.caption" Class="pb-nowrap">@_elapsed</MudText>
+            </div>
+        </div>
+        @if (!string.IsNullOrEmpty(_applyStatus) && !_applyStatus.StartsWith("Apply failed", StringComparison.Ordinal))
+        {
+            <MudText Typo="Typo.body2">@_applyStatus</MudText>
+        }
+        @foreach (var item in _applyItems)
+        {
+            <MudText Typo="Typo.body2">@ApplyLine(item)</MudText>
+        }
+        <div class="pb-scan-wrap">
+            <table class="pb-scan">
+                <colgroup>
+                    <col class="source" />
+                    <col class="destination" />
+                    <col class="result" />
+                </colgroup>
+                <thead>
+                    <tr>
+                        <th>Source</th>
+                        <th>Destination</th>
+                        <th>Result</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var section in _sections)
+                    {
+                        var name = section.Name;
+                        var open = _expanded.Contains(name);
+                        <tr class="library" @onclick="() => ToggleSection(name, !open)">
+                            <td class="@(section.SourceLabel == "not on source" ? "absent" : null)">
+                                <span class="chevron">@(open ? "▾" : "▸")</span> @section.SourceLabel
+                            </td>
+                            <td class="@(section.DestinationLabel == "not on destination" ? "absent" : null)">@section.DestinationLabel</td>
+                            <td class="result">
+                                <span>@section.Summary</span>
+                                @if (!string.IsNullOrEmpty(section.SummaryNote))
+                                {
+                                    <span class="pb-note">· @section.SummaryNote</span>
+                                }
+                                @if (!_running && section.Keys.Count > 0)
+                                {
+                                    <button type="button" class="pb-action" @onclick:stopPropagation="true" @onclick="() => MakeKeys(section.Keys)">@(Covers(section.Keys) ? "Undo" : "Make all match")</button>
+                                }
+                            </td>
+                        </tr>
+                        @if (open)
+                        {
+                            @if (section.Total == 0)
+                            {
+                                <tr class="item">
+                                    <td colspan="3">No rows in this library for the current filter.</td>
+                                </tr>
+                            }
+                            @foreach (var row in section.Rows)
+                            {
+                                <tr class="item">
+                                    <td class="@(row.SourceAbsent ? "absent" : null)" title="@row.SourceText">
+                                        <div>@row.SourceText</div>
+                                        @if (!string.IsNullOrEmpty(row.SourceDetail))
+                                        {
+                                            <div class="identity" title="@row.SourceDetail">@row.SourceDetail</div>
+                                        }
+                                    </td>
+                                    <td class="@(row.DestinationAbsent ? "absent" : null)" title="@row.DestinationText">
+                                        <div>@row.DestinationText</div>
+                                        @if (!string.IsNullOrEmpty(row.DestinationDetail))
+                                        {
+                                            <div class="identity" title="@row.DestinationDetail">@row.DestinationDetail</div>
+                                        }
+                                    </td>
+                                    <td class="result" title="@row.ResultText">
+                                        <span class="@row.Tone">@row.ResultText</span>
+                                        @if (!string.IsNullOrEmpty(row.MatchNote))
+                                        {
+                                            <span class="pb-note">@row.MatchNote</span>
+                                        }
+                                        @if (row.JustApplied)
+                                        {
+                                            <span class="pb-note">applied</span>
+                                        }
+                                        @if (!_running && !string.IsNullOrEmpty(row.UnmatchedDetail))
+                                        {
+                                            <button type="button" class="pb-action" @onclick="() => ToggleOpen(row)">@(_open.Contains(row.Key) ? "Hide" : "Why not matched?")</button>
+                                        }
+                                        @if (!_running && row.Expandable && !row.Settled)
+                                        {
+                                            <button type="button" class="pb-action" @onclick="() => ToggleOpen(row)">@(_open.Contains(row.Key) ? "Hide" : (row.Items.Count > 0 ? "Items" : "Metrics"))</button>
+                                            @if (row.Keys.Count > 0)
+                                            {
+                                                <button type="button" class="pb-action" @onclick="() => MakeRow(row)">@(Covers(row.Keys) ? "Undo" : (row.Items.Count > 0 ? "Make match" : "Make all match"))</button>
+                                            }
+                                        }
+                                        else if (!_running && row.NoAction && row.Result != ComparisonResult.Missing)
+                                        {
+                                            <span class="pb-note">no action (one-way)</span>
+                                        }
+                                    </td>
+                                </tr>
+                                @if (!_running && _open.Contains(row.Key) && !string.IsNullOrEmpty(row.UnmatchedDetail))
+                                {
+                                    <tr class="metric-row">
+                                        <td colspan="3"><pre class="pb-why">@row.UnmatchedDetail</pre></td>
+                                    </tr>
+                                }
+                                @if (!_running && row.Expandable && _open.Contains(row.Key))
+                                {
+                                    <tr class="metric-row">
+                                        <td colspan="3">
+                                            @if (row.Items.Count > 0)
+                                            {
+                                                <table class="pb-metrics">
+                                                    <tbody>
+                                                        @foreach (var item in row.Items)
+                                                        {
+                                                            var itemKey = item.ActionKey;
+                                                            <tr>
+                                                                <td title="@item.Title">@item.Title</td>
+                                                                <td title="@item.Detail">@item.Detail</td>
+                                                                <td class="@(item.Status.StartsWith("not found", StringComparison.Ordinal) ? "missing" : "match")">
+                                                                    @item.Status
+                                                                    @if (item.HasAction)
+                                                                    {
+                                                                        <button type="button" class="pb-action" @onclick="() => MakeKeys([itemKey])">@(Covers([itemKey]) ? "Undo" : "Make match")</button>
+                                                                    }
+                                                                </td>
+                                                            </tr>
+                                                        }
+                                                    </tbody>
+                                                </table>
+                                            }
+                                            else
+                                            {
+                                                <table class="pb-metrics">
+                                                    <tbody>
+                                                        @foreach (var metric in row.MetricRows)
+                                                        {
+                                                            <tr>
+                                                                <td title="@metric.Name">@metric.Name</td>
+                                                                <td title="@metric.SourceValue">@metric.SourceValue</td>
+                                                                <td title="@metric.DestinationValue">@metric.DestinationValue</td>
+                                                                <td class="@(metric.Matches ? "match" : "out")">
+                                                                    @(metric.Matches ? "matches ✓" : "differs ✗")
+                                                                    @if (!metric.Matches && metric.Keys.Count > 0)
+                                                                    {
+                                                                        <button type="button" class="pb-action" @onclick="() => MakeKeys(metric.Keys)">@(Covers(metric.Keys) ? "Undo" : "Make match")</button>
+                                                                    }
+                                                                </td>
+                                                            </tr>
+                                                        }
+                                                    </tbody>
+                                                </table>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            }
+                            @if (section.Total > MigrationPlan.PageSize)
+                            {
+                                <tr class="pager">
+                                    <td colspan="3">
+                                        <button type="button" class="pb-action" disabled="@(section.Skip == 0)" @onclick="() => MoveSection(name, -MigrationPlan.PageSize)">Previous</button>
+                                        <span class="identity">@(section.Skip + 1)–@(section.Skip + section.Rows.Count) of @section.Total</span>
+                                        <button type="button" class="pb-action" disabled="@(section.Skip + section.Rows.Count >= section.Total)" @onclick="() => MoveSection(name, MigrationPlan.PageSize)">Next</button>
+                                    </td>
+                                </tr>
+                            }
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        @if (_summary is not null && !_running)
+        {
+        <MudPaper Class="pa-4" Outlined="true">
+            <MudStack Spacing="2">
+                <MudText Typo="Typo.subtitle1">Confirm this plan</MudText>
+                <MudText Typo="Typo.body2">
+                    Apply writes only the changes you marked with Make match. Nothing is selected until you choose it.
+                    It does not scan libraries, play media, or remove a server.
+                </MudText>
+                <MudCheckBox T="bool" Value="_confirm" ValueChanged="SetConfirm" Disabled="_selected.Count == 0 || _applying" Label="@($"Apply the {_selected.Count} selected change{(_selected.Count == 1 ? "" : "s")} to {_destinationName}.")" />
+                <MudButton Variant="Variant.Filled" Color="Color.Error" Disabled="_applying || !_confirm || _selected.Count == 0" OnClick="Apply">Apply to @_destinationName</MudButton>
+                @if (_applying || (!string.IsNullOrEmpty(_applyStatus) && !_applyStatus.StartsWith("Apply failed", StringComparison.Ordinal)))
+                {
+                    <MudText Typo="Typo.body2">@_applyStatus</MudText>
+                }
+            </MudStack>
+        </MudPaper>
+        }
+    }
+
+    @if (_result is not null)
+    {
+        <MudAlert Severity="@(_result.Failed > 0 || _result.Canceled ? Severity.Warning : Severity.Success)">
+            Applied @_result.Applied. Failed @_result.Failed. Skipped @_result.Skipped.
+            @(_result.Canceled ? " The rest was canceled." : "")
+        </MudAlert>
+        <MudStack Spacing="1" Class="pb-plan">
+            @foreach (var item in _result.Items.Take(200))
+            {
+                <MudText Typo="Typo.body2"><b>@item.Outcome</b> · @item.Title @item.Detail</MudText>
+            }
+        </MudStack>
+    }
+</MudStack>
+
+@code {
+    private readonly List<PlexServerSummary> _servers = [];
+    private bool _loading = true;
+    private bool _running;
+    private bool _showProgress;
+    private int _progressHold;
+    private string _status = "";
+    private List<MigrationPhaseView> _phases = [];
+    private string? _jobId;
+    private PeriodicTimer? _poll;
+    private string? _error;
+    private string? _info;
+    private int _sourceId;
+    private int _destinationId;
+    private bool _watched = true;
+    private bool _progress = true;
+    private bool _ratings = true;
+    private bool _playlists;
+    private bool _confirm;
+    private string _plexUserKey = "";
+    private string _plexUserName = "saved server tokens";
+    private string _plexHint = "Home users use their own watched state, progress, ratings, and playlists.";
+    private List<MigrationPlexUserChoice> _plexUsers = [];
+    private string? _guestUrl;
+    private PeriodicTimer? _guestPoll;
+    private MigrationPlanSummary? _summary;
+    private string _sourceName = "";
+    private string _destinationName = "";
+    private bool _applying;
+    private string _applyStatus = "";
+    private List<MigrationApplyItem> _applyItems = [];
+    private string _view = UserPreferences.Mismatches;
+    private string _filter = UserPreferences.Mismatches;
+    private bool _follow = true;
+    private string _search = "";
+    private string _step = "Reading";
+    private string _elapsed = "";
+    private string _lastUpdate = "";
+    private int _rowCount;
+    private readonly Dictionary<string, int> _skips = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _expanded = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _collapsed = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _userPaged = new(StringComparer.Ordinal);
+    private List<LibrarySection> _sections = [];
+    private readonly HashSet<string> _selected = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _open = new(StringComparer.Ordinal);
+    private MigrationApplyResult? _result;
+
+    private bool CanPreview => _sourceId > 0 && _destinationId > 0 && _sourceId != _destinationId && (_watched || _progress || _ratings || _playlists);
+    private bool Covers(IReadOnlyList<string> keys) => keys.Count > 0 && keys.All(key => _selected.Contains(key));
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _view = await Preferences.GetMigrateViewAsync();
+            _filter = _view == UserPreferences.ShowAll ? "all" : UserPreferences.Mismatches;
+            _servers.AddRange(await Servers.ListAsync());
+            if (_servers.Count > 0)
+                _sourceId = _servers[0].Id;
+            if (_servers.Count > 1)
+                _destinationId = _servers[1].Id;
+            await LoadPlexUsers();
+            await ShowJob(await Migration.LatestPreviewAsync(plexUserKey: _plexUserKey));
+            if (_running || _applying)
+                StartWatch();
+        }
+        catch (PlexBridgeException exception)
+        {
+            _error = exception.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task Preview()
+    {
+        _error = null;
+        _info = null;
+        _result = null;
+        _confirm = false;
+        _summary = null;
+        _sections = [];
+        _skips.Clear();
+        _expanded.Clear();
+        _collapsed.Clear();
+        _userPaged.Clear();
+        _selected.Clear();
+        _open.Clear();
+        if (_running)
+            return;
+        try
+        {
+            await ShowJob(await Migration.StartPreviewAsync(_sourceId, _destinationId, Selected(), plexUserKey: _plexUserKey, plexUserName: _plexUserName));
+            if (_running || _applying)
+                StartWatch();
+        }
+        catch (PlexBridgeException exception)
+        {
+            _error = exception.Message;
+        }
+    }
+
+    private void StartWatch()
+    {
+        _poll?.Dispose();
+        var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(500));
+        _poll = timer;
+        _ = Watch(timer);
+    }
+
+    private async Task Watch(PeriodicTimer timer)
+    {
+        try
+        {
+            while (await timer.WaitForNextTickAsync())
+            {
+                await ShowJob(await Migration.LatestPreviewAsync(plexUserKey: _plexUserKey));
+                await InvokeAsync(StateHasChanged);
+                if (!_running && !_applying)
+                    break;
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    private async Task ShowJob(MigrationJobSnapshot? job)
+    {
+        if (job is null)
+        {
+            _running = false;
+            _phases = [];
+            return;
+        }
+
+        var wasRunning = _running;
+        _jobId = job.Id;
+        _status = job.Status;
+        _step = job.Step;
+        _phases = job.Phases.ToList();
+        _rowCount = job.RowCount;
+        _summary = job.Summary;
+        if (!string.IsNullOrEmpty(job.SourceName))
+            _sourceName = job.SourceName;
+        if (!string.IsNullOrEmpty(job.DestinationName))
+            _destinationName = job.DestinationName;
+        var wasApplying = _applying;
+        var becameReady = wasRunning && job.State == MigrationJobState.Completed;
+        _running = job.State == MigrationJobState.Running;
+        if (_running)
+            _showProgress = false;
+        else if (becameReady)
+            _ = HoldProgress();
+        _applying = job.ApplyState == "Running";
+        _applyStatus = job.ApplyStatus;
+        _applyItems = job.ApplyItems?.ToList() ?? [];
+        var age = DateTimeOffset.UtcNow - job.UpdatedUtc;
+        _lastUpdate = age.TotalSeconds < 1 ? "just now" : $"{(int)age.TotalSeconds}s ago";
+        var elapsed = DateTimeOffset.UtcNow - job.StartedUtc;
+        _elapsed = elapsed.TotalHours >= 1
+            ? $"{(int)elapsed.TotalHours}:{elapsed.Minutes:00}:{elapsed.Seconds:00}"
+            : $"{(int)elapsed.TotalMinutes}:{elapsed.Seconds:00}";
+        if (job.State == MigrationJobState.Running)
+            await LoadLibraries();
+        else if (job.State == MigrationJobState.Completed && job.Summary is not null)
+        {
+            _info = job.Summary.WillApply + job.Summary.Conflicts > 0
+                ? "Preview only. Confirm the plan below before anything is written."
+                : "Nothing to write. Unmatched items were not changed.";
+            _error = null;
+            if (wasRunning || _sections.Count == 0)
+            {
+                _follow = false;
+                _filter = _view == UserPreferences.ShowAll ? "all" : UserPreferences.Mismatches;
+                _skips.Clear();
+                await LoadLibraries();
+            }
+
+            await LoadSelection();
+        }
+        else if (job.State == MigrationJobState.Failed)
+        {
+            _error = job.Error ?? "The preview failed. Nothing was written.";
+            _summary = null;
+        }
+        else if (job.State == MigrationJobState.Canceled)
+        {
+            _info = job.Error ?? "Canceled. Nothing was written.";
+            _error = null;
+        }
+
+        if (wasApplying && !_applying)
+        {
+            await LoadLibraries();
+            await LoadSelection();
+            if (job.ApplyState == "Failed")
+                _error = job.ApplyStatus;
+        }
+    }
+
+    private async Task HoldProgress()
+    {
+        var hold = ++_progressHold;
+        _showProgress = true;
+        await Task.Delay(TimeSpan.FromSeconds(2));
+        if (hold != _progressHold)
+            return;
+        _showProgress = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private static string LibraryIcon(string label) => label switch
+    {
+        "TV Shows" => Icons.Material.Filled.Tv,
+        "Music" => Icons.Material.Filled.LibraryMusic,
+        "Other Videos" => Icons.Material.Filled.VideoLibrary,
+        "Playlists" => Icons.Material.Filled.QueueMusic,
+        _ => Icons.Material.Filled.Movie
+    };
+
+    private static RenderFragment ProgressCell(PreviewProgress.Cell cell) => cell.Kind switch
+    {
+        "reading" => @<span class="pb-progress-cell reading"><MudProgressCircular Size="Size.Small" Indeterminate="true" /> Reading… @PreviewProgress.Count(cell.Items) items</span>,
+        "done" => @<span class="pb-progress-cell done"><MudIcon Icon="@Icons.Material.Filled.Check" Size="Size.Small" Color="Color.Success" /> Done · @PreviewProgress.Count(cell.Items) items</span>,
+        "failed" => @<span class="pb-progress-cell fail"><MudIcon Icon="@Icons.Material.Filled.Close" Size="Size.Small" Color="Color.Error" /> Failed</span>,
+        "absent" => @<span class="pb-progress-cell absent">not on this server</span>,
+        _ => @<span class="pb-progress-cell wait">Waiting</span>
+    };
+
+    private static string ApplyLine(MigrationApplyItem item)
+        => string.IsNullOrEmpty(item.Detail) ? item.Outcome + " · " + item.Title : item.Detail;
+
+    private async Task LoadLibraries()
+    {
+        if (_jobId is null)
+            return;
+        var sections = await Migration.PreviewLibrariesAsync(_jobId, _filter, _search, _skips, _expanded, _collapsed);
+        if (sections is null)
+            return;
+        if (_follow && _running)
+        {
+            var moved = false;
+            foreach (var section in sections)
+            {
+                if (!section.Scanning || _userPaged.Contains(section.Name))
+                    continue;
+                var tail = Math.Max(0, section.Total - MigrationPlan.PageSize);
+                if (tail == section.Skip)
+                    continue;
+                _skips[section.Name] = tail;
+                moved = true;
+            }
+
+            if (moved)
+            {
+                sections = await Migration.PreviewLibrariesAsync(_jobId, _filter, _search, _skips, _expanded, _collapsed) ?? sections;
+            }
+        }
+
+        _sections = sections.ToList();
+    }
+
+    private async Task ToggleSection(string name, bool open)
+    {
+        if (_expanded.Contains(name) == open)
+            return;
+        if (open)
+        {
+            _expanded.Add(name);
+            _collapsed.Remove(name);
+        }
+        else
+        {
+            _expanded.Remove(name);
+            _collapsed.Add(name);
+        }
+
+        await LoadLibraries();
+    }
+
+    private async Task MoveSection(string name, int delta)
+    {
+        _userPaged.Add(name);
+        var current = _skips.GetValueOrDefault(name);
+        _skips[name] = Math.Max(0, current + delta);
+        await LoadLibraries();
+    }
+
+    private Variant ViewVariant(string view) => _view == view ? Variant.Filled : Variant.Outlined;
+
+    private async Task SetView(string view)
+    {
+        _view = view == UserPreferences.ShowAll ? UserPreferences.ShowAll : UserPreferences.Mismatches;
+        _filter = _view == UserPreferences.ShowAll ? "all" : UserPreferences.Mismatches;
+        _follow = _running && _view == UserPreferences.ShowAll;
+        _skips.Clear();
+        _userPaged.Clear();
+        _open.Clear();
+        await Preferences.SetMigrateViewAsync(_view);
+        if (_jobId is not null)
+            await LoadLibraries();
+    }
+
+    private async Task ChangeFilter(string value)
+    {
+        _filter = value;
+        _follow = false;
+        _skips.Clear();
+        _userPaged.Clear();
+        await LoadLibraries();
+    }
+
+    private async Task ChangeSearch(string value)
+    {
+        _search = value;
+        _follow = false;
+        _skips.Clear();
+        _userPaged.Clear();
+        await LoadLibraries();
+    }
+
+    private static string Count(int? value) => value is > 0 ? value.Value.ToString() : "";
+
+    private void ToggleOpen(ScanLine row)
+    {
+        if (!_open.Add(row.Key))
+            _open.Remove(row.Key);
+    }
+
+    private async Task MakeRow(ScanLine row) => await MakeKeys(row.Keys);
+
+    private async Task MakeKeys(IReadOnlyList<string> keys)
+    {
+        if (_jobId is null || keys.Count == 0)
+            return;
+        var include = !Covers(keys);
+        await Remember(keys, include);
+    }
+
+    private async Task MakeFilterMatch()
+    {
+        if (_jobId is null)
+            return;
+        await Migration.SelectMatchingAsync(_jobId, _filter, _search, true);
+        await LoadSelection();
+        _confirm = false;
+    }
+
+    private async Task ClearPending()
+    {
+        if (_jobId is null || _selected.Count == 0)
+            return;
+        await Remember(_selected.ToArray(), false);
+    }
+
+    private async Task Remember(IReadOnlyCollection<string> keys, bool include)
+    {
+        if (_jobId is null)
+            return;
+        await Migration.SelectAsync(_jobId, keys, include);
+        await LoadSelection();
+        _confirm = false;
+    }
+
+    private async Task LoadSelection()
+    {
+        if (_jobId is null)
+            return;
+        _selected.Clear();
+        foreach (var key in await Migration.SelectionAsync(_jobId))
+            _selected.Add(key);
+    }
+
+    public void Dispose()
+    {
+        _poll?.Dispose();
+        _guestPoll?.Dispose();
+    }
+
+    private async Task LoadPlexUsers()
+    {
+        try
+        {
+            _plexUsers = (await PlexUsers.ListAsync()).ToList();
+            var adminUser = _plexUsers.FirstOrDefault(person => person.Admin) ?? _plexUsers.FirstOrDefault();
+            if (adminUser is not null)
+                await ChoosePlexUser(adminUser.Key);
+        }
+        catch (PlexBridgeException exception)
+        {
+            _plexHint = exception.Message;
+            _plexUserKey = "";
+            _plexUserName = "saved server tokens";
+        }
+    }
+
+    private async Task ChoosePlexUser(string key)
+    {
+        if (key == _plexUserKey && _plexUsers.Count > 0 && _plexUserName != "saved server tokens")
+            return;
+        if (string.IsNullOrEmpty(key))
+        {
+            _plexUserKey = "";
+            _plexUserName = "saved server tokens";
+            await ResetForUser();
+            return;
+        }
+
+        var person = _plexUsers.FirstOrDefault(item => item.Key == key);
+        var pin = "";
+        if (person?.Protected == true)
+        {
+            var parameters = new DialogParameters<PlexUserPinDialog> { { dialog => dialog.Name, person.Name } };
+            var dialog = await Dialogs.ShowAsync<PlexUserPinDialog>("Plex PIN", parameters);
+            var result = await dialog.Result;
+            if (result is null || result.Canceled || result.Data is not string entered || string.IsNullOrWhiteSpace(entered))
+                return;
+            pin = entered;
+        }
+
+        try
+        {
+            _plexUserName = await PlexUsers.ActivateAsync(key, string.IsNullOrEmpty(pin) ? null : pin);
+            _plexUserKey = key;
+            _error = null;
+            await ResetForUser();
+        }
+        catch (PlexBridgeException exception)
+        {
+            _error = exception.Message;
+        }
+    }
+
+    private async Task ResetForUser()
+    {
+        _sections = [];
+        _skips.Clear();
+        _expanded.Clear();
+        _collapsed.Clear();
+        _userPaged.Clear();
+        _selected.Clear();
+        _open.Clear();
+        _confirm = false;
+        _applyStatus = "";
+        _applyItems = [];
+        await ShowJob(await Migration.LatestPreviewAsync(plexUserKey: _plexUserKey));
+        if (_running || _applying)
+            StartWatch();
+    }
+
+    private async Task StartGuest()
+    {
+        try
+        {
+            var pin = await PlexUsers.StartGuestPinAsync();
+            _guestUrl = pin.AuthorizeUrl;
+            _guestPoll?.Dispose();
+            var timer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+            _guestPoll = timer;
+            _ = WatchGuest(timer);
+        }
+        catch (PlexBridgeException exception)
+        {
+            _error = exception.Message;
+        }
+    }
+
+    private async Task WatchGuest(PeriodicTimer timer)
+    {
+        try
+        {
+            while (await timer.WaitForNextTickAsync())
+            {
+                var poll = await PlexUsers.PollGuestPinAsync();
+                if (poll.State == PlexPinState.Pending || poll.State == PlexPinState.SlowDown)
+                    continue;
+                _guestUrl = null;
+                if (poll.State == PlexPinState.Authorized && poll.Link?.Key is not null && poll.Link.Username is not null)
+                {
+                    _plexUsers.Add(new MigrationPlexUserChoice(poll.Link.Key, poll.Link.Username, false, false, true));
+                    _info = "Signed in " + poll.Link.Username + " for this migration only. The admin account link was not changed.";
+                    await ChoosePlexUser(poll.Link.Key);
+                }
+                else
+                    _error = poll.Message;
+                await InvokeAsync(StateHasChanged);
+                break;
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    private void CancelGuest()
+    {
+        _guestPoll?.Dispose();
+        _guestUrl = null;
+    }
+
+    private async Task Apply()
+    {
+        if (_jobId is null || _summary is null || !_confirm)
+            return;
+        _error = null;
+        _info = null;
+        _confirm = false;
+        try
+        {
+            await Migration.StartApplyAsync(_jobId, _selected.ToArray());
+            _applying = true;
+            _applyStatus = "Checking selected items.";
+            StartWatch();
+        }
+        catch (PlexBridgeException exception)
+        {
+            _error = exception.Message;
+        }
+    }
+
+    private IReadOnlyCollection<MigrationCategory> Selected()
+    {
+        var categories = new List<MigrationCategory>();
+        if (_watched)
+            categories.Add(MigrationCategory.Watched);
+        if (_progress)
+            categories.Add(MigrationCategory.Progress);
+        if (_ratings)
+            categories.Add(MigrationCategory.Ratings);
+        if (_playlists)
+            categories.Add(MigrationCategory.Playlists);
+        return categories;
+    }
+
+    private void OnSource(int id)
+    {
+        _sourceId = id;
+        ForgetPlan();
+    }
+
+    private void OnDestination(int id)
+    {
+        _destinationId = id;
+        ForgetPlan();
+    }
+
+    private void ToggleWatched(bool value) => Toggle(ref _watched, value);
+    private void ToggleProgress(bool value) => Toggle(ref _progress, value);
+    private void ToggleRatings(bool value) => Toggle(ref _ratings, value);
+    private void TogglePlaylists(bool value) => Toggle(ref _playlists, value);
+
+    private void Toggle(ref bool field, bool value)
+    {
+        field = value;
+        ForgetPlan();
+    }
+
+    private void ForgetPlan()
+    {
+        _summary = null;
+        _sections = [];
+        _skips.Clear();
+        _expanded.Clear();
+        _collapsed.Clear();
+        _userPaged.Clear();
+        _confirm = false;
+        _result = null;
+        _info = null;
+    }
+
+    private void SetConfirm(bool value) => _confirm = value;
+
+    private static string Label(PlexServerSummary server)
+        => (server.Slot is 1 or 2 ? $"Server {server.Slot} · " : "") + server.Name + " · " + server.BaseUrl;
+}

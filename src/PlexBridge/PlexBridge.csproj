@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
+    <!-- Local builds. The release workflow passes -p:Version (for example 0.1.12 or 0.1.13-beta). -->
+    <Version>0.0.0-dev</Version>
+    <UserSecretsId>plexbridge-7c1e0a4b-6d2f-4e8a-9b15-3f0c8a2d6e41</UserSecretsId>
+    <RootNamespace>PlexBridge</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.14" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.14">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.14" />
+    <PackageReference Include="MudBlazor" Version="9.12.0" />
+    <PackageReference Include="Extensions.MudBlazor.StaticInput" Version="4.1.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="PlexBridge.Tests" />
+  </ItemGroup>
+
+</Project>

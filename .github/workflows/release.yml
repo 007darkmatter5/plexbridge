@@ -1,0 +1,139 @@
+name: Release
+
+# Push to main: test, smoke-test, publish ghcr.io/007darkmatter5/plexbridge:latest and :sha-<commit>.
+# Tag v* (v1.2.3): the same, published as the semver tag (1.2.3).
+# Publishing is limited to github.com/007darkmatter5/plexbridge.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/007darkmatter5/plexbridge
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - run: dotnet restore
+      - run: dotnet build --no-restore -c Release
+      - run: dotnet test --no-build -c Release
+
+  publish:
+    needs: test
+    if: github.repository == '007darkmatter5/plexbridge'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Refuse to publish outside github.com/007darkmatter5/plexbridge
+        run: |
+          if [ "$GITHUB_REPOSITORY" != "007darkmatter5/plexbridge" ]; then
+            echo "Refusing to publish from $GITHUB_REPOSITORY"
+            exit 1
+          fi
+
+      - name: Work out image tags
+        id: meta
+        run: |
+          sha="sha-${GITHUB_SHA::12}"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+            echo "tags=$IMAGE:$version" >> "$GITHUB_OUTPUT"
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+          else
+            echo "tags=$IMAGE:latest,$IMAGE:$sha" >> "$GITHUB_OUTPUT"
+            echo "version=$sha" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build image for smoke test
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: plexbridge:smoke
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+          cache-from: type=gha,scope=release
+
+      - name: Smoke test
+        run: |
+          set -eu
+          smoke() {
+            name=$1 expected_uid=$2; shift 2
+            echo "::group::$name"
+            docker run -d --name "$name" -p 8080:8080 -v "$PWD/$name/config:/config" "$@" plexbridge:smoke
+            ok=""
+            for i in $(seq 1 60); do
+              if curl -fsS http://localhost:8080/healthz >/dev/null 2>&1; then ok=1; break; fi
+              sleep 1
+            done
+            docker logs "$name"
+            [ -n "$ok" ] || { echo "$name: never became healthy"; exit 1; }
+            curl -fsS http://localhost:8080/Account/Login > login.html
+            grep -q "Log in" login.html || grep -q "Create" login.html
+            uid=$(docker exec "$name" cat /proc/1/status | awk '/^Uid:/ {print $2}')
+            [ "$uid" = "$expected_uid" ] || { echo "$name: app runs as UID $uid, expected $expected_uid"; exit 1; }
+            [ "$(sudo stat -c %u "$name/config/plexbridge.db")" = "$expected_uid" ] || { echo "$name: database not owned by $expected_uid"; exit 1; }
+            sudo sh -c "ls $name/config/keys/key-*.xml"
+            if docker logs "$name" 2>&1 | grep -E "^(fail|crit):"; then echo "$name: errors in startup logs"; exit 1; fi
+            docker rm -f "$name"
+            echo "::endgroup::"
+          }
+
+          sudo mkdir -p unraid/config
+          smoke unraid 99 -e PUID=99 -e PGID=100
+
+          sudo mkdir -p defaults/config && sudo chown -R 1654:1654 defaults
+          smoke defaults 1654
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=release
+          cache-to: type=gha,mode=max,scope=release
+
+      - name: Note if the package is still private
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          code=$(curl -s -o visibility.json -w "%{http_code}" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/user/packages/container/plexbridge || true)
+          echo "package lookup HTTP $code"
+          if [ "$code" = "200" ]; then
+            python3 -c 'import json; print(json.load(open("visibility.json")).get("visibility","unknown"))'
+          else
+            echo "The workflow token cannot read package visibility. If Unraid cannot pull the image, set the package to Public."
+          fi
