@@ -1,0 +1,22 @@
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">End this stream?</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-2">@TitleName</MudText>
+        <MudText Typo="Typo.body2">@ActionText The viewer will need to start playback again. This does not change Plex settings.</MudText>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Warning" Variant="Variant.Filled" OnClick="Confirm">Do it now</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public string TitleName { get; set; } = "";
+    [Parameter] public string ActionText { get; set; } = "";
+
+    private void Cancel() => MudDialog.Cancel();
+    private void Confirm() => MudDialog.Close(DialogResult.Ok(true));
+}

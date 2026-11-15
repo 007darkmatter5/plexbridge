@@ -10,6 +10,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<PlexAccountLink> PlexAccountLinks => Set<PlexAccountLink>();
     public DbSet<MigrationAudit> MigrationAudits => Set<MigrationAudit>();
     public DbSet<MigrationAuditItem> MigrationAuditItems => Set<MigrationAuditItem>();
+    public DbSet<WatchdogSetting> WatchdogSettings => Set<WatchdogSetting>();
+    public DbSet<WatchdogIncident> WatchdogIncidents => Set<WatchdogIncident>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -71,6 +73,54 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.Property(x => x.Username).HasMaxLength(200);
             entity.Property(x => x.PlexUserId).HasMaxLength(80);
             entity.HasIndex(x => x.UserId).IsUnique();
+        });
+
+        builder.Entity<WatchdogSetting>(entity =>
+        {
+            entity.ToTable("WatchdogSettings");
+            entity.Property(x => x.RecoveryMode).HasMaxLength(20).IsRequired();
+            entity.Property(x => x.LogFolder).HasMaxLength(300);
+            entity.HasIndex(x => x.PlexServerConnectionId).IsUnique();
+            entity.HasOne(x => x.Server)
+                .WithMany()
+                .HasForeignKey(x => x.PlexServerConnectionId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<WatchdogIncident>(entity =>
+        {
+            entity.ToTable("WatchdogIncidents");
+            entity.Property(x => x.ServerName).HasMaxLength(80).IsRequired();
+            entity.Property(x => x.PlaySessionId).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.SessionKey).HasMaxLength(128);
+            entity.Property(x => x.TranscodeSessionId).HasMaxLength(128);
+            entity.Property(x => x.DisplayTitle).HasMaxLength(300).IsRequired();
+            entity.Property(x => x.AccountTitle).HasMaxLength(200);
+            entity.Property(x => x.PlayerProduct).HasMaxLength(80);
+            entity.Property(x => x.PlayerPlatform).HasMaxLength(80);
+            entity.Property(x => x.PlayerDevice).HasMaxLength(80);
+            entity.Property(x => x.Guids).HasMaxLength(500);
+            entity.Property(x => x.RatingKey).HasMaxLength(128);
+            entity.Property(x => x.FilePath).HasMaxLength(500);
+            entity.Property(x => x.PartId).HasMaxLength(128);
+            entity.Property(x => x.Container).HasMaxLength(40);
+            entity.Property(x => x.VideoCodec).HasMaxLength(40);
+            entity.Property(x => x.AudioCodec).HasMaxLength(40);
+            entity.Property(x => x.VideoResolution).HasMaxLength(40);
+            entity.Property(x => x.PlayDecision).HasMaxLength(40).IsRequired();
+            entity.Property(x => x.SubtitleCodec).HasMaxLength(40);
+            entity.Property(x => x.StallRule).HasMaxLength(40).IsRequired();
+            entity.Property(x => x.Resolution).HasMaxLength(40).IsRequired();
+            entity.Property(x => x.TimelineJson).IsRequired();
+            entity.Property(x => x.ProposedAction).HasMaxLength(300);
+            entity.Property(x => x.ActionKind).HasMaxLength(40);
+            entity.Property(x => x.ActionStatus).HasMaxLength(40).IsRequired();
+            entity.Property(x => x.ActionDetail).HasMaxLength(300);
+            entity.HasIndex(x => new { x.PlexServerConnectionId, x.StartedUtc });
+            entity.HasOne(x => x.Server)
+                .WithMany()
+                .HasForeignKey(x => x.PlexServerConnectionId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
     }
 }

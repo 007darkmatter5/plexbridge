@@ -12,6 +12,7 @@ using PlexBridge.Logging;
 using PlexBridge.Plex;
 using PlexBridge.Security;
 using PlexBridge.Services;
+using PlexBridge.Watchdog;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -128,6 +129,12 @@ builder.Services.AddSingleton<MigrationUserTokens>();
 builder.Services.AddScoped<MigrationPlexUsers>();
 builder.Services.AddSingleton<MigrationPreviewJobs>();
 builder.Services.AddScoped<MigrationService>();
+builder.Services.AddSingleton<WatchdogLiveBoard>();
+builder.Services.AddSingleton<WatchdogSessionEnds>();
+builder.Services.AddSingleton<PlexSessionClient>();
+builder.Services.AddSingleton<WatchdogActions>();
+builder.Services.AddHostedService<StreamWatchdogService>();
+builder.Services.AddScoped<WatchdogPageService>();
 builder.Services.AddHealthChecks()
     .AddCheck<DatabaseHealthCheck>("database");
 
