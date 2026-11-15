@@ -1,3 +1,5 @@
+using PlexBridge.Watchdog;
+
 namespace PlexBridge.Data;
 
 /// <summary>One of the two configured Plex Media Servers. The token column is data-protection ciphertext.</summary>
@@ -73,6 +75,67 @@ public class MigrationAuditItem
     public string Outcome { get; set; } = "";
     public string Title { get; set; } = "";
     public string? Detail { get; set; }
+}
+
+/// <summary>Per-server watchdog switches. Created when the admin saves the Watchdog page. Tokens are not stored here.</summary>
+public class WatchdogSetting
+{
+    public int Id { get; set; }
+    public int PlexServerConnectionId { get; set; }
+    public PlexServerConnection? Server { get; set; }
+    public bool Enabled { get; set; }
+    public int PollIntervalSeconds { get; set; } = WatchdogDefaults.PollSeconds;
+    public int OffsetStallSeconds { get; set; } = WatchdogDefaults.OffsetStallSeconds;
+    public int SlowTranscodeSeconds { get; set; } = WatchdogDefaults.SlowTranscodeSeconds;
+    public int TranscodeMissingSeconds { get; set; } = WatchdogDefaults.TranscodeMissingSeconds;
+    public int LongBufferingSeconds { get; set; } = WatchdogDefaults.LongBufferingSeconds;
+    public string RecoveryMode { get; set; } = WatchdogRecovery.ReportOnly;
+    public string? LogFolder { get; set; }
+    public bool UseNotifications { get; set; } = true;
+}
+
+/// <summary>One stalled stream. The Plex token is never copied onto this row.</summary>
+public class WatchdogIncident
+{
+    public int Id { get; set; }
+    public int? PlexServerConnectionId { get; set; }
+    public PlexServerConnection? Server { get; set; }
+    public string ServerName { get; set; } = "";
+    public int ServerSlot { get; set; }
+    public string PlaySessionId { get; set; } = "";
+    public string? SessionKey { get; set; }
+    public string? TranscodeSessionId { get; set; }
+    public string DisplayTitle { get; set; } = "";
+    public string? AccountTitle { get; set; }
+    public string? PlayerProduct { get; set; }
+    public string? PlayerPlatform { get; set; }
+    public string? PlayerDevice { get; set; }
+    public string? Guids { get; set; }
+    public string? RatingKey { get; set; }
+    public string? FilePath { get; set; }
+    public string? PartId { get; set; }
+    public string? Container { get; set; }
+    public string? VideoCodec { get; set; }
+    public string? AudioCodec { get; set; }
+    public string? VideoResolution { get; set; }
+    public int? BitrateKbps { get; set; }
+    public string PlayDecision { get; set; } = "";
+    public bool? HardwareTranscode { get; set; }
+    public bool? HardwareFullPipeline { get; set; }
+    public bool SubtitleBurn { get; set; }
+    public string? SubtitleCodec { get; set; }
+    public string StallRule { get; set; } = "";
+    public string Resolution { get; set; } = IncidentResolutions.StillStuck;
+    public string TimelineJson { get; set; } = "[]";
+    public string? LogExcerpt { get; set; }
+    public string? ProposedAction { get; set; }
+    public string? ActionKind { get; set; }
+    public string ActionStatus { get; set; } = WatchdogActionStatus.None;
+    public string? ActionDetail { get; set; }
+    public DateTimeOffset? ActionUtc { get; set; }
+    public DateTimeOffset StartedUtc { get; set; }
+    public DateTimeOffset UpdatedUtc { get; set; }
+    public DateTimeOffset? ResolvedUtc { get; set; }
 }
 
 public static class ServerStatuses

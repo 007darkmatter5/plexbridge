@@ -30,3 +30,6 @@ services:
     volumes:
       - /mnt/user/appdata/plexbridge:/config
       - /etc/localtime:/etc/localtime:ro
+      # Optional. Mount the Plex server's Logs folder and set that path on the Watchdog page.
+      # The container does not need this. Leave it unset and the watchdog still records incidents.
+      # - /mnt/user/plex-logs:/plex-logs:ro

@@ -433,6 +433,210 @@ namespace PlexBridge.Data.Migrations
                     b.ToTable("PlexServers", (string)null);
                 });
 
+            modelBuilder.Entity("PlexBridge.Data.WatchdogIncident", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("AccountTitle")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ActionDetail")
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ActionKind")
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ActionStatus")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("ActionUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AudioCodec")
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("BitrateKbps")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Container")
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DisplayTitle")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FilePath")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Guids")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool?>("HardwareFullPipeline")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool?>("HardwareTranscode")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("LogExcerpt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PartId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PlayDecision")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PlaySessionId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PlayerDevice")
+                        .HasMaxLength(80)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PlayerPlatform")
+                        .HasMaxLength(80)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PlayerProduct")
+                        .HasMaxLength(80)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("PlexServerConnectionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ProposedAction")
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RatingKey")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Resolution")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("ResolvedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ServerName")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ServerSlot")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SessionKey")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StallRule")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("StartedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("SubtitleBurn")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SubtitleCodec")
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TimelineJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TranscodeSessionId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("UpdatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("VideoCodec")
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("VideoResolution")
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PlexServerConnectionId", "StartedUtc");
+
+                    b.ToTable("WatchdogIncidents", (string)null);
+                });
+
+            modelBuilder.Entity("PlexBridge.Data.WatchdogSetting", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("LogFolder")
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("LongBufferingSeconds")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("OffsetStallSeconds")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("PlexServerConnectionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("PollIntervalSeconds")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("RecoveryMode")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SlowTranscodeSeconds")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("TranscodeMissingSeconds")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("UseNotifications")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PlexServerConnectionId")
+                        .IsUnique();
+
+                    b.ToTable("WatchdogSettings", (string)null);
+                });
+
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<string>", b =>
                 {
                     b.HasOne("Microsoft.AspNetCore.Identity.IdentityRole", null)
@@ -504,6 +708,27 @@ namespace PlexBridge.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("Audit");
+                });
+
+            modelBuilder.Entity("PlexBridge.Data.WatchdogIncident", b =>
+                {
+                    b.HasOne("PlexBridge.Data.PlexServerConnection", "Server")
+                        .WithMany()
+                        .HasForeignKey("PlexServerConnectionId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Server");
+                });
+
+            modelBuilder.Entity("PlexBridge.Data.WatchdogSetting", b =>
+                {
+                    b.HasOne("PlexBridge.Data.PlexServerConnection", "Server")
+                        .WithMany()
+                        .HasForeignKey("PlexServerConnectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Server");
                 });
 
             modelBuilder.Entity("PlexBridge.Data.MigrationAudit", b =>

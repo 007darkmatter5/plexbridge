@@ -1,0 +1,455 @@
+@page "/watchdog"
+@attribute [Authorize]
+@implements IDisposable
+@inject WatchdogPageService Watch
+@inject IDialogService Dialogs
+@using PlexBridge.Watchdog
+
+<PageTitle>Watchdog · PlexBridge</PageTitle>
+
+<MudStack Spacing="4">
+    <div>
+        <div class="pb-kicker">Streams</div>
+        <MudText Typo="Typo.h4" Class="mt-1">Watchdog</MudText>
+        <MudText Typo="Typo.body1" Class="mt-2" Style="max-width: 46rem">
+            Watches the server slots you turn on for a stream that locks up. It records the incident and, in Report-only mode, shows the action it would take.
+            Nothing is sent to Plex until you press Do it now, unless that server is set to Auto. Suggestions do not change server settings.
+        </MudText>
+    </div>
+
+    @if (_notice is not null)
+    {
+        <MudAlert Severity="@(_noticeError ? Severity.Error : Severity.Success)" Variant="Variant.Outlined">@_notice</MudAlert>
+    }
+    @if (_error is not null)
+    {
+        <MudAlert Severity="Severity.Error">@_error</MudAlert>
+    }
+
+    @if (_editors.Count == 0 && !_loading)
+    {
+        <MudAlert Severity="Severity.Normal" Variant="Variant.Outlined">Save a server on the dashboard before turning the watchdog on.</MudAlert>
+    }
+
+    @foreach (var editor in _editors)
+    {
+        <MudPaper Class="pa-4" Outlined="true" @key="editor.ServerId">
+            <MudStack Spacing="2">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Wrap="Wrap.Wrap">
+                    <div>
+                        <MudText Typo="Typo.h6">Server @editor.Slot · @editor.Name</MudText>
+                        <MudText Typo="Typo.body2" Class="pb-path">@editor.BaseUrl</MudText>
+                    </div>
+                    <MudSwitch T="bool" @bind-Value="editor.Enabled" Label="Watch this server" Color="Color.Primary" Disabled="@(!editor.HasToken || _saving)" />
+                </MudStack>
+                @if (!editor.HasToken)
+                {
+                    <MudAlert Severity="Severity.Warning" Dense="true">This server has no token yet.</MudAlert>
+                }
+                <MudGrid Spacing="2">
+                    <MudItem xs="6" sm="4" md="2">
+                        <MudNumericField T="int" @bind-Value="editor.PollIntervalSeconds" Label="Poll (seconds)" Variant="Variant.Outlined" Min="3" Max="60" Disabled="_saving" />
+                    </MudItem>
+                    <MudItem xs="6" sm="4" md="2">
+                        <MudNumericField T="int" @bind-Value="editor.OffsetStallSeconds" Label="Offset stall" Variant="Variant.Outlined" Min="10" Max="300" Disabled="_saving" />
+                    </MudItem>
+                    <MudItem xs="6" sm="4" md="2">
+                        <MudNumericField T="int" @bind-Value="editor.SlowTranscodeSeconds" Label="Slow transcode" Variant="Variant.Outlined" Min="10" Max="300" Disabled="_saving" />
+                    </MudItem>
+                    <MudItem xs="6" sm="4" md="2">
+                        <MudNumericField T="int" @bind-Value="editor.TranscodeMissingSeconds" Label="Transcode gone" Variant="Variant.Outlined" Min="10" Max="300" Disabled="_saving" />
+                    </MudItem>
+                    <MudItem xs="6" sm="4" md="2">
+                        <MudNumericField T="int" @bind-Value="editor.LongBufferingSeconds" Label="Long buffering" Variant="Variant.Outlined" Min="10" Max="300" Disabled="_saving" />
+                    </MudItem>
+                    <MudItem xs="12" sm="6" md="2">
+                        <MudSelect T="string" @bind-Value="editor.RecoveryMode" Label="Recovery" Variant="Variant.Outlined" Disabled="_saving">
+                            <MudSelectItem T="string" Value="@WatchdogRecovery.Off">Off</MudSelectItem>
+                            <MudSelectItem T="string" Value="@WatchdogRecovery.ReportOnly">Report-only</MudSelectItem>
+                            <MudSelectItem T="string" Value="@WatchdogRecovery.Auto">Auto</MudSelectItem>
+                        </MudSelect>
+                    </MudItem>
+                </MudGrid>
+                <MudText Typo="Typo.caption">
+                    A pause is not a stall. A throttled transcode that is ahead of the viewer is not a stall.
+                    Report-only shows the action and waits. Auto ends the stream. Off only records it.
+                </MudText>
+                <MudTextField T="string" @bind-Value="editor.LogFolder" Label="Plex logs folder (optional)" Variant="Variant.Outlined" Disabled="_saving"
+                              HelperText="A full path that contains Plex Media Server.log, such as a mapped copy of %LOCALAPPDATA%\Plex Media Server\Logs. Leave this blank if the logs are not mounted." />
+                <MudSwitch T="bool" @bind-Value="editor.UseNotifications" Label="Use server notifications" Color="Color.Primary" Disabled="_saving" />
+                <MudText Typo="Typo.caption">Playing and transcode events wake a poll sooner. The token stays in the header. If the socket is unavailable, polling continues.</MudText>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_saving" OnClick="() => Save(editor)">Save</MudButton>
+            </MudStack>
+        </MudPaper>
+    }
+
+    <div>
+        <MudText Typo="Typo.h5">Live sessions</MudText>
+        <MudText Typo="Typo.body2" Class="mb-2">Title, user, client, decision, speed, and health from the last poll.</MudText>
+        @if (!_live.Any(server => server.Watching))
+        {
+            <MudAlert Severity="Severity.Normal" Variant="Variant.Outlined" Dense="true">No server is being watched.</MudAlert>
+        }
+        @foreach (var server in _live.Where(item => item.Watching))
+        {
+            <MudStack Spacing="1" Class="mb-3" @key="server.ServerId">
+                <MudText Typo="Typo.subtitle1">Server @server.Slot · @server.Name</MudText>
+                <MudText Typo="Typo.caption">
+                    Last poll @(server.PolledUtc?.ToLocalTime().ToString("HH:mm:ss") ?? "not yet").
+                    @Notes(server.Notifications)
+                </MudText>
+                @if (!string.IsNullOrWhiteSpace(server.Error))
+                {
+                    <MudAlert Severity="Severity.Warning" Dense="true">@server.Error</MudAlert>
+                }
+                @if (server.Sessions.Count == 0)
+                {
+                    <MudText Typo="Typo.body2">No streams right now.</MudText>
+                }
+                else
+                {
+                    <MudSimpleTable Dense="true" Hover="true" Style="overflow-x: auto">
+                        <thead>
+                            <tr>
+                                <th>Title</th>
+                                <th>User</th>
+                                <th>Client</th>
+                                <th>Decision</th>
+                                <th>Speed</th>
+                                <th>Health</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var session in server.Sessions)
+                            {
+                                <tr>
+                                    <td>@session.Title</td>
+                                    <td>@session.User</td>
+                                    <td>@session.Client</td>
+                                    <td>@session.Decision</td>
+                                    <td>@session.Speed</td>
+                                    <td><MudChip T="string" Size="Size.Small" Color="@HealthColor(session.Health)">@HealthText(session)</MudChip></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </MudSimpleTable>
+                }
+            </MudStack>
+        }
+    </div>
+
+    <div>
+        <MudText Typo="Typo.h5">Incidents</MudText>
+        @if (_incidents.Count == 0)
+        {
+            <MudText Typo="Typo.body2" Class="mt-2">No incidents yet. Watching looks for a stuck view offset, a slow transcode, a transcode that disappears, and long buffering.</MudText>
+        }
+        else
+        {
+            <MudExpansionPanels MultiExpansion="true" Class="mt-2">
+                @foreach (var incident in _incidents)
+                {
+                    <MudExpansionPanel @key="incident.Id" Text="@($"{incident.When} · {incident.Title} · {incident.Rule}")">
+                        <MudStack Spacing="1">
+                            <MudChip T="string" Size="Size.Small" Color="@OutcomeColor(incident.Outcome)">@incident.Outcome</MudChip>
+                            <MudText Typo="Typo.body2">Server @incident.ServerSlot · @incident.ServerName · @incident.User · @incident.Client</MudText>
+                            <MudText Typo="Typo.body2">@incident.Decision · @incident.Container · @incident.VideoCodec / @incident.AudioCodec · @incident.VideoResolution · @incident.Bitrate</MudText>
+                            <MudText Typo="Typo.body2">Subtitles @(incident.SubtitleBurn ? "burned in" : "not burned")@(string.IsNullOrWhiteSpace(incident.SubtitleCodec) ? "" : " · " + incident.SubtitleCodec)</MudText>
+                            @if (!string.IsNullOrWhiteSpace(incident.FilePath))
+                            {
+                                <MudText Typo="Typo.body2" Class="pb-path">@incident.FilePath</MudText>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(incident.Guids))
+                            {
+                                <MudText Typo="Typo.caption">@incident.Guids</MudText>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(incident.ActionText))
+                            {
+                                <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined">@incident.ActionText</MudAlert>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(incident.ActionDetail))
+                            {
+                                <MudText Typo="Typo.body2">@incident.ActionDetail</MudText>
+                            }
+                            @if (incident.ShowButton)
+                            {
+                                <MudButton Variant="Variant.Outlined" Color="Color.Warning" Disabled="_acting" OnClick="() => Confirm(incident)">@incident.ButtonLabel</MudButton>
+                            }
+                            @if (incident.Timeline.Count > 0)
+                            {
+                                <MudText Typo="Typo.subtitle2" Class="mt-2">Timeline</MudText>
+                                @foreach (var line in incident.Timeline)
+                                {
+                                    <MudText Typo="Typo.caption" Class="pb-path">@line</MudText>
+                                }
+                            }
+                            @if (!string.IsNullOrWhiteSpace(incident.LogExcerpt))
+                            {
+                                <MudText Typo="Typo.subtitle2" Class="mt-2">Plex log lines near this time</MudText>
+                                <pre class="pb-path">@incident.LogExcerpt</pre>
+                            }
+                        </MudStack>
+                    </MudExpansionPanel>
+                }
+            </MudExpansionPanels>
+        }
+    </div>
+
+    <div>
+        <MudText Typo="Typo.h5">Patterns</MudText>
+        <MudText Typo="Typo.body2" Class="mt-1 mb-2">Grouped from the recorded incidents. A suggestion is advice only.</MudText>
+        @if (_patterns.Suggestions.Count == 0 && _patterns.Groups.Count == 0)
+        {
+            <MudText Typo="Typo.body2">A group appears after the same file, client, or format stalls more than once.</MudText>
+        }
+        @foreach (var suggestion in _patterns.Suggestions)
+        {
+            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-2">@suggestion</MudAlert>
+        }
+        @if (_patterns.Groups.Count > 0)
+        {
+            <MudSimpleTable Dense="true" Hover="true">
+                <thead>
+                    <tr>
+                        <th>Group</th>
+                        <th>What repeated</th>
+                        <th>Count</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var group in _patterns.Groups)
+                    {
+                        <tr>
+                            <td>@group.Kind</td>
+                            <td class="pb-path">@group.Key</td>
+                            <td>@group.Count</td>
+                        </tr>
+                    }
+                </tbody>
+            </MudSimpleTable>
+        }
+    </div>
+</MudStack>
+
+@code {
+    private readonly CancellationTokenSource _stop = new();
+    private PeriodicTimer? _timer;
+    private bool _loading = true;
+    private bool _saving;
+    private bool _acting;
+    private string? _error;
+    private string? _notice;
+    private bool _noticeError;
+    private List<Editor> _editors = [];
+    private IReadOnlyList<LiveServerView> _live = [];
+    private IReadOnlyList<WatchdogIncidentView> _incidents = [];
+    private PatternReport _patterns = new([], []);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Reload(includeSettings: true);
+        _timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+        _ = RefreshAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        try
+        {
+            while (_timer is not null && await _timer.WaitForNextTickAsync(_stop.Token))
+            {
+                await InvokeAsync(async () =>
+                {
+                    if (_saving || _acting)
+                        return;
+                    await Reload(includeSettings: false);
+                    StateHasChanged();
+                });
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task Reload(bool includeSettings)
+    {
+        try
+        {
+            var screen = await Watch.LoadAsync();
+            _live = screen.Live;
+            _incidents = screen.Incidents;
+            _patterns = screen.Patterns;
+            if (includeSettings)
+                _editors = screen.Settings.Select(Editor.From).ToList();
+            else
+            {
+                foreach (var setting in screen.Settings)
+                {
+                    if (_editors.All(editor => editor.ServerId != setting.ServerId))
+                        _editors.Add(Editor.From(setting));
+                }
+            }
+            _error = null;
+        }
+        catch (Exception)
+        {
+            _error = "The watchdog could not be loaded.";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task Save(Editor editor)
+    {
+        _saving = true;
+        _notice = null;
+        try
+        {
+            await Watch.SaveAsync(editor.ToInput());
+            _notice = "Saved " + editor.Name + ".";
+            _noticeError = false;
+            await Reload(includeSettings: false);
+        }
+        catch (PlexBridgeException exception)
+        {
+            _notice = exception.Message;
+            _noticeError = true;
+        }
+        catch (Exception)
+        {
+            _notice = "The watchdog settings could not be saved.";
+            _noticeError = true;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task Confirm(WatchdogIncidentView incident)
+    {
+        var parameters = new DialogParameters<WatchdogActionDialog>
+        {
+            { dialog => dialog.TitleName, incident.Title },
+            { dialog => dialog.ActionText, incident.ActionText ?? "End the play session so the client can reconnect." }
+        };
+        var dialog = await Dialogs.ShowAsync<WatchdogActionDialog>("End this stream?", parameters);
+        var result = await dialog.Result;
+        if (result is null || result.Canceled)
+            return;
+
+        _acting = true;
+        _notice = null;
+        try
+        {
+            var action = await Watch.ActAsync(incident.Id);
+            _notice = action.Message;
+            _noticeError = !action.Ok;
+            await Reload(includeSettings: false);
+        }
+        catch (PlexBridgeException exception)
+        {
+            _notice = exception.Message;
+            _noticeError = true;
+        }
+        catch (Exception)
+        {
+            _notice = "The action could not be sent.";
+            _noticeError = true;
+        }
+        finally
+        {
+            _acting = false;
+        }
+    }
+
+    private static string Notes(string status) => status switch
+    {
+        "connected" => "Notifications connected.",
+        "connecting" => "Connecting to notifications. Polling in the meantime.",
+        "unavailable" => "Notifications are unavailable. Polling continues.",
+        "off" => "Notifications are off.",
+        _ => "Polling."
+    };
+
+    private static string HealthText(LiveSessionView session)
+        => session.Health == "Stuck" && !string.IsNullOrWhiteSpace(session.Rule)
+            ? "Stuck · " + WatchdogText.Rule(session.Rule)
+            : session.Health;
+
+    private static Color HealthColor(string health) => health switch
+    {
+        "Healthy" => Color.Success,
+        "Buffering" or "Slow" or "Stalling" => Color.Warning,
+        "Stuck" => Color.Error,
+        _ => Color.Default
+    };
+
+    private static Color OutcomeColor(string outcome) => outcome switch
+    {
+        "Still stuck" => Color.Error,
+        "Recovered on its own" => Color.Success,
+        "Ended by the watchdog" => Color.Info,
+        _ => Color.Default
+    };
+
+    public void Dispose()
+    {
+        _stop.Cancel();
+        _timer?.Dispose();
+        _stop.Dispose();
+    }
+
+    private sealed class Editor
+    {
+        public int ServerId { get; set; }
+        public int Slot { get; set; }
+        public string Name { get; set; } = "";
+        public string BaseUrl { get; set; } = "";
+        public bool HasToken { get; set; }
+        public bool Enabled { get; set; }
+        public int PollIntervalSeconds { get; set; }
+        public int OffsetStallSeconds { get; set; }
+        public int SlowTranscodeSeconds { get; set; }
+        public int TranscodeMissingSeconds { get; set; }
+        public int LongBufferingSeconds { get; set; }
+        public string RecoveryMode { get; set; } = WatchdogRecovery.ReportOnly;
+        public string LogFolder { get; set; } = "";
+        public bool UseNotifications { get; set; } = true;
+
+        public static Editor From(WatchdogSettingsForm form) => new()
+        {
+            ServerId = form.ServerId,
+            Slot = form.Slot,
+            Name = form.Name,
+            BaseUrl = form.BaseUrl,
+            HasToken = form.HasToken,
+            Enabled = form.Enabled,
+            PollIntervalSeconds = form.PollIntervalSeconds,
+            OffsetStallSeconds = form.OffsetStallSeconds,
+            SlowTranscodeSeconds = form.SlowTranscodeSeconds,
+            TranscodeMissingSeconds = form.TranscodeMissingSeconds,
+            LongBufferingSeconds = form.LongBufferingSeconds,
+            RecoveryMode = form.RecoveryMode,
+            LogFolder = form.LogFolder,
+            UseNotifications = form.UseNotifications
+        };
+
+        public WatchdogSettingsInput ToInput() => new()
+        {
+            ServerId = ServerId,
+            Enabled = Enabled,
+            PollIntervalSeconds = PollIntervalSeconds,
+            OffsetStallSeconds = OffsetStallSeconds,
+            SlowTranscodeSeconds = SlowTranscodeSeconds,
+            TranscodeMissingSeconds = TranscodeMissingSeconds,
+            LongBufferingSeconds = LongBufferingSeconds,
+            RecoveryMode = RecoveryMode,
+            LogFolder = LogFolder,
+            UseNotifications = UseNotifications
+        };
+    }
+}
