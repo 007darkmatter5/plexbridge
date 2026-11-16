@@ -126,7 +126,8 @@ public sealed class LyricsJobs(IServiceScopeFactory scopes, ILogger<LyricsJobs> 
             var server = await db.PlexServers.AsNoTracking().FirstOrDefaultAsync(item => item.Id == serverId, job.Cancel.Token)
                 ?? throw new PlexBridgeException("That server was not found.");
             var setting = await db.LyricsSettings.AsNoTracking().FirstOrDefaultAsync(item => item.PlexServerConnectionId == server.Id, job.Cancel.Token);
-            var maps = LyricsPaths.FromJson(setting?.PathMapsJson);
+            var mount = await db.LibraryMounts.AsNoTracking().FirstOrDefaultAsync(item => item.PlexServerConnectionId == server.Id, job.Cancel.Token);
+            var maps = PlexBridge.Libraries.LibraryMountStore.ReadMaps(mount, setting);
             job.ServerName = server.Name;
             var (uri, token) = Open(scope.ServiceProvider, server);
             var progress = new Progress<LyricsProgress>(update => job.Report(update.Status, update.Done, update.Total));

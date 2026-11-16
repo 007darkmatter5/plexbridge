@@ -13,6 +13,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<WatchdogSetting> WatchdogSettings => Set<WatchdogSetting>();
     public DbSet<WatchdogIncident> WatchdogIncidents => Set<WatchdogIncident>();
     public DbSet<LyricsSetting> LyricsSettings => Set<LyricsSetting>();
+    public DbSet<LibraryMount> LibraryMounts => Set<LibraryMount>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -93,7 +94,20 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.ToTable("LyricsSettings");
             entity.Property(x => x.PathMapsJson).IsRequired();
             entity.Property(x => x.MusicSectionKey).HasMaxLength(16);
+            entity.Property(x => x.MusicSectionTitle).HasMaxLength(200);
             entity.Property(x => x.ContainerFolder).HasMaxLength(400);
+            entity.HasIndex(x => x.PlexServerConnectionId).IsUnique();
+            entity.HasOne(x => x.Server)
+                .WithMany()
+                .HasForeignKey(x => x.PlexServerConnectionId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<LibraryMount>(entity =>
+        {
+            entity.ToTable("LibraryMounts");
+            entity.Property(x => x.ContainerFolder).HasMaxLength(400);
+            entity.Property(x => x.PathMapsJson).IsRequired();
             entity.HasIndex(x => x.PlexServerConnectionId).IsUnique();
             entity.HasOne(x => x.Server)
                 .WithMany()

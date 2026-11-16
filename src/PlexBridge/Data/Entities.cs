@@ -145,9 +145,11 @@ public class LyricsSetting
     public int PlexServerConnectionId { get; set; }
     public PlexServerConnection? Server { get; set; }
     public string PathMapsJson { get; set; } = "[]";
-    /// <summary>Artist library chosen for automatic path mapping. Null when the row only has saved prefixes.</summary>
+    /// <summary>Artist library chosen for lyrics. Null when the row only has saved prefixes.</summary>
     public string? MusicSectionKey { get; set; }
-    /// <summary>Container folder the library folders are mapped onto, usually /music.</summary>
+    /// <summary>Title of the artist library, so the page can show the name without the section key.</summary>
+    public string? MusicSectionTitle { get; set; }
+    /// <summary>Container folder last used from the Lyrics page. The libraries mount is the shared copy.</summary>
     public string? ContainerFolder { get; set; }
     /// <summary>True when Advanced prefixes replace the library mapping.</summary>
     public bool UseManualMaps { get; set; }
@@ -156,6 +158,24 @@ public class LyricsSetting
     public bool AutoCheckEnabled { get; set; }
     public int AutoCheckIntervalHours { get; set; } = 12;
     public DateTimeOffset? LastAutoCheckUtc { get; set; }
+}
+
+/// <summary>
+/// Per-server media mount. Any feature that writes next to a file uses these path maps.
+/// The Plex token is not stored here.
+/// </summary>
+public class LibraryMount
+{
+    public int Id { get; set; }
+    public int PlexServerConnectionId { get; set; }
+    public PlexServerConnection? Server { get; set; }
+    /// <summary>Folder mounted in this container, usually /libraries. /music still works when that is what was saved.</summary>
+    public string? ContainerFolder { get; set; }
+    /// <summary>True when Advanced prefixes replace the automatic library mapping.</summary>
+    public bool UseManualMaps { get; set; }
+    public string PathMapsJson { get; set; } = "[]";
+    /// <summary>Last check of each movie, show, and music library. Null until a check is saved.</summary>
+    public string? SectionMatchesJson { get; set; }
 }
 
 public static class ServerStatuses

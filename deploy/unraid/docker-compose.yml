@@ -33,7 +33,7 @@ services:
       # Optional. Mount the Plex server's Logs folder and set that path on the Watchdog page.
       # The container does not need this. Leave it unset and the watchdog still records incidents.
       # - /mnt/user/plex-logs:/plex-logs:ro
-      # Optional. Mount the music share read-write so the Lyrics page can write a .lrc or .txt
-      # next to a track. On that page, choose the music library and this folder.
+      # Optional. Point this at the folder that contains all your Plex media libraries.
+      # Features that write next to media use it (lyrics now). An existing /music mount still works.
       # Plex has to be able to read the new files. PUID 99 and PGID 100 is the usual Unraid case.
-      # - /mnt/user/media/music:/music
+      # - /mnt/user/media:/libraries

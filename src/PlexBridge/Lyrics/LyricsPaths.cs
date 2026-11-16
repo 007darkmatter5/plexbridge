@@ -8,7 +8,7 @@ namespace PlexBridge.Lyrics;
 /// </summary>
 public static class LyricsPaths
 {
-    public const int MaxMaps = 8;
+    public const int MaxMaps = 32;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly string[] BlockedContainers =
     [
@@ -63,7 +63,7 @@ public static class LyricsPaths
 
         if (clean.Count > MaxMaps)
         {
-            error = "Save at most 8 path mappings for one server.";
+            error = "Save at most 32 path mappings for one server.";
             return false;
         }
 
@@ -206,7 +206,7 @@ public static class LyricsPaths
         if (!windows && !value.StartsWith('/'))
         {
             error = container
-                ? "The container path has to be a full path, such as /music."
+                ? "The container path has to be a full path, such as /libraries."
                 : "The Plex path has to be a full path, such as /mnt/user/media/music or D:\\Music.";
             return false;
         }
@@ -225,13 +225,13 @@ public static class LyricsPaths
 
         if (!container && text == "/")
         {
-            error = "Map a music folder, not the whole Plex filesystem.";
+            error = "Map a library folder, not the whole Plex filesystem.";
             return false;
         }
 
         if (container && IsBlockedContainer(text))
         {
-            error = "That container path is not a music folder. Use the mounted music share, such as /music.";
+            error = "That container path is not a media folder. Use the mounted libraries share, such as /libraries.";
             return false;
         }
 
