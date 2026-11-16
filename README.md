@@ -82,7 +82,7 @@ Plex's own note is [Adding Local Lyrics and Artwork for Music files](https://sup
 
 Both files are UTF-8. Plex staff say to refresh the album's metadata after the files are in place. PlexBridge does that with `PUT /library/metadata/{albumRatingKey}/refresh`, then reads the track again. A lyrics stream is `streamType` 4. When the provider is `com.plexapp.agents.localmedia`, the stream is the sidecar. If that stream is still missing, PlexBridge refreshes that track the same way and reads it once more. It does not start a library scan.
 
-Plex reports the path it sees, which is not the path inside this container. Each server has its own list of prefixes, for example `/mnt/user/media/music` to `/music`, or `D:\Music` to `/music`. The longest matching prefix is used. The page says when a file is not at the mapped path or the folder is not writable. Details, the LRCLIB matching rules, and the optional new-track check are in [docs/lyrics.md](docs/lyrics.md).
+Plex reports the path it sees, which is not the path inside this container. On the Lyrics page, choose the music library and the mounted folder, usually `/music`. PlexBridge reads that library's folders from Plex and maps them, then checks a few real tracks. A folder that is not on the mount is marked not found. Advanced, collapsed on the page, is there when a library mapping is not the right one. The page says when a file is not at the mapped path or the folder is not writable. Details, the LRCLIB matching rules, and the optional new-track check are in [docs/lyrics.md](docs/lyrics.md).
 
 The check for newly added tracks is off until you turn it on. Turning it on does not walk the library you already have. It also never replaces a `.lrc`, a `.txt`, or a lyrics stream that is already there.
 

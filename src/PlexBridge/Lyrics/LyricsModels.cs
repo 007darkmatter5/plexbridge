@@ -18,6 +18,21 @@ public static class LyricsStatus
 /// <summary>One Plex path prefix mapped onto a path inside this container.</summary>
 public sealed record LyricsPathMap(string PlexPrefix, string ContainerPrefix);
 
+/// <summary>Shown after a library folder is checked against the container mount.</summary>
+public static class LyricsMapStatus
+{
+    public const string Ok = "OK";
+    public const string NotFound = "Not found";
+}
+
+/// <summary>One Plex library folder and where it landed in the container, if anywhere.</summary>
+public sealed record LyricsLocationMatch(
+    string PlexLocation,
+    string? ContainerPrefix,
+    string Status,
+    int SamplesChecked,
+    int SamplesFound);
+
 public sealed record LyricsQuery(string Title, string Artist, string Album, int DurationSeconds);
 
 public sealed record LyricsProgress(string Status, int Done, int Total);

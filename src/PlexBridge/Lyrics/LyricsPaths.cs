@@ -72,6 +72,28 @@ public static class LyricsPaths
         return true;
     }
 
+    public static bool TryNormalizeContainer(string value, out string prefix, out string error)
+        => TryCleanPrefix(value, container: true, out prefix, out error);
+
+    public static bool TryNormalizePlexPrefix(string value, out string prefix, out string error)
+        => TryCleanPrefix(value, container: false, out prefix, out error);
+
+    internal static bool IsFileUnder(string? path, string prefix)
+    {
+        if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(prefix))
+            return false;
+        var candidate = path.Trim();
+        if (candidate.Contains('\0') || candidate.Any(char.IsControl))
+            return false;
+        if (!MatchesPrefix(candidate, prefix))
+            return false;
+        var remainder = Remainder(candidate, prefix);
+        return !string.IsNullOrEmpty(remainder) && !remainder.Contains("..", StringComparison.Ordinal);
+    }
+
+    internal static bool SamePrefix(string left, string right)
+        => PrefixEquals(left, right);
+
     public static bool TryMap(string? plexPath, IReadOnlyList<LyricsPathMap> maps, out string containerPath, out string error)
     {
         containerPath = "";

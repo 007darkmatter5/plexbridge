@@ -44,38 +44,86 @@
                     <MudAlert Severity="Severity.Warning" Dense="true">This server has no token yet.</MudAlert>
                 }
                 <MudText Typo="Typo.body2">
-                    Plex reports the path it sees. Map that prefix to the folder mounted in this container.
-                    On Unraid that is often /mnt/user/media/music on the Plex side and /music in PlexBridge.
+                    Choose the music library and the folder mounted in this container. PlexBridge reads that library's folders from Plex and maps them.
+                    The usual container folder is /music.
                 </MudText>
-                @if (editor.LibraryLocations.Count > 0)
+                <MudGrid Spacing="2">
+                    <MudItem xs="12" md="6">
+                        <MudSelect T="string" Value="editor.SectionKey" ValueChanged="@(key => OnMappedLibrary(editor, key))" Label="Music library" Variant="Variant.Outlined" Disabled="_saving || !editor.HasToken" AnchorOrigin="Origin.BottomCenter">
+                            <MudSelectItem T="string" Value="@("")">Choose a library</MudSelectItem>
+                            @if (!string.IsNullOrEmpty(editor.SectionKey) && editor.Libraries.All(item => item.Key != editor.SectionKey))
+                            {
+                                <MudSelectItem T="string" Value="@editor.SectionKey">Saved library @editor.SectionKey</MudSelectItem>
+                            }
+                            @foreach (var library in editor.Libraries)
+                            {
+                                <MudSelectItem T="string" Value="@library.Key">@library.Title</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12" md="6">
+                        <MudTextField T="string" Value="editor.ContainerFolder" ValueChanged="@(value => OnContainer(editor, value))" Label="Container folder" Variant="Variant.Outlined" Disabled="_saving" HelperText="Usually /music" Immediate="true" />
+                    </MudItem>
+                </MudGrid>
+                @if (!string.IsNullOrEmpty(editor.LibraryNote))
                 {
-                    <MudText Typo="Typo.caption">Music folders from the last inventory:</MudText>
-                    @foreach (var location in editor.LibraryLocations)
+                    <MudText Typo="Typo.caption">@editor.LibraryNote</MudText>
+                }
+                @if (editor.UseManualMaps)
+                {
+                    <MudText Typo="Typo.caption">Manual path prefixes</MudText>
+                    @foreach (var map in FilledMaps(editor))
                     {
-                        <MudText Typo="Typo.body2" Class="pb-path">@location</MudText>
+                        <MudText Typo="Typo.body2" Class="pb-path">@map.PlexPrefix → @map.ContainerPrefix</MudText>
                     }
                 }
-                else
+                else if (editor.Matches.Count > 0)
                 {
-                    <MudText Typo="Typo.caption">Refresh the library inventory on the dashboard to see the folders Plex reported.</MudText>
+                    @foreach (var match in editor.Matches)
+                    {
+                        <MudText Typo="Typo.body2" Class="pb-path">@MatchLine(match)</MudText>
+                    }
+                    @if (editor.Matches.All(match => match.Status != LyricsMapStatus.Ok) && FilledMaps(editor).Count > 0)
+                    {
+                        <MudText Typo="Typo.caption">Saved path prefixes are still in use.</MudText>
+                        @foreach (var map in FilledMaps(editor))
+                        {
+                            <MudText Typo="Typo.body2" Class="pb-path">@map.PlexPrefix → @map.ContainerPrefix</MudText>
+                        }
+                    }
                 }
-                @foreach (var map in editor.Maps)
+                else if (FilledMaps(editor).Count > 0)
                 {
-                    <MudGrid Spacing="2" @key="map">
-                        <MudItem xs="12" md="5">
-                            <MudTextField T="string" @bind-Value="map.PlexPrefix" Label="Plex path prefix" Variant="Variant.Outlined" Disabled="_saving" />
-                        </MudItem>
-                        <MudItem xs="12" md="5">
-                            <MudTextField T="string" @bind-Value="map.ContainerPrefix" Label="Container path" Variant="Variant.Outlined" Disabled="_saving" HelperText="For example /music" />
-                        </MudItem>
-                        <MudItem xs="12" md="2" Class="d-flex align-center">
-                            <MudButton Variant="Variant.Text" Color="Color.Default" Disabled="_saving" OnClick="() => editor.Maps.Remove(map)">Remove</MudButton>
-                        </MudItem>
-                    </MudGrid>
+                    <MudText Typo="Typo.caption">Saved path prefixes</MudText>
+                    @foreach (var map in FilledMaps(editor))
+                    {
+                        <MudText Typo="Typo.body2" Class="pb-path">@map.PlexPrefix → @map.ContainerPrefix</MudText>
+                    }
                 }
-                <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
-                    <MudButton Variant="Variant.Outlined" Disabled="_saving" OnClick="() => editor.Maps.Add(new LyricsMapInput())">Add path</MudButton>
-                </MudStack>
+                <MudButton Variant="Variant.Outlined" Disabled="_saving || editor.UseManualMaps || string.IsNullOrEmpty(editor.SectionKey)" OnClick="() => Check(editor)">Check paths</MudButton>
+                <MudExpansionPanels>
+                    <MudExpansionPanel Text="Advanced" Expanded="false">
+                        <MudStack Spacing="2">
+                            <MudText Typo="Typo.body2">Manual path prefixes. Turn this on only when the library mapping is not the right one. These replace it.</MudText>
+                            <MudSwitch T="bool" @bind-Value="editor.UseManualMaps" Label="Use manual prefixes" Color="Color.Primary" Disabled="_saving" />
+                            @foreach (var map in editor.Maps)
+                            {
+                                <MudGrid Spacing="2" @key="map">
+                                    <MudItem xs="12" md="5">
+                                        <MudTextField T="string" @bind-Value="map.PlexPrefix" Label="Plex path prefix" Variant="Variant.Outlined" Disabled="_saving" />
+                                    </MudItem>
+                                    <MudItem xs="12" md="5">
+                                        <MudTextField T="string" @bind-Value="map.ContainerPrefix" Label="Container path" Variant="Variant.Outlined" Disabled="_saving" />
+                                    </MudItem>
+                                    <MudItem xs="12" md="2" Class="d-flex align-center">
+                                        <MudButton Variant="Variant.Text" Color="Color.Default" Disabled="_saving" OnClick="() => editor.Maps.Remove(map)">Remove</MudButton>
+                                    </MudItem>
+                                </MudGrid>
+                            }
+                            <MudButton Variant="Variant.Outlined" Disabled="_saving" OnClick="() => editor.Maps.Add(new LyricsMapInput())">Add path</MudButton>
+                        </MudStack>
+                    </MudExpansionPanel>
+                </MudExpansionPanels>
                 <MudSwitch T="bool" @bind-Value="editor.AutoCheck" Label="Check newly added tracks" Color="Color.Primary" Disabled="_saving" />
                 <MudText Typo="Typo.caption">
                     Off by default. When you turn it on, PlexBridge looks up tracks added after that moment.
@@ -285,9 +333,23 @@
                 AutoCheck = form.AutoCheck,
                 IntervalHours = form.IntervalHours,
                 LastAutoCheckUtc = form.LastAutoCheckUtc,
-                LibraryLocations = form.LibraryLocations.ToList(),
-                Maps = form.Maps.Select(map => new LyricsMapInput { PlexPrefix = map.PlexPrefix, ContainerPrefix = map.ContainerPrefix }).ToList()
+                SectionKey = form.SectionKey ?? "",
+                ContainerFolder = string.IsNullOrWhiteSpace(form.ContainerFolder) ? "/music" : form.ContainerFolder,
+                UseManualMaps = form.UseManualMaps,
+                Maps = form.Maps.Select(map => new LyricsMapInput { PlexPrefix = map.PlexPrefix, ContainerPrefix = map.ContainerPrefix }).ToList(),
+                Matches = form.Matches.ToList()
             }));
+            foreach (var editor in _editors.Where(item => item.HasToken))
+            {
+                try
+                {
+                    editor.Libraries.AddRange(await LyricsPage.MusicLibrariesAsync(editor.ServerId));
+                }
+                catch (Exception exception) when (exception is PlexBridgeException or PlexRequestException)
+                {
+                    editor.LibraryNote = exception.Message;
+                }
+            }
             if (_serverId == 0)
                 _serverId = _editors.FirstOrDefault(item => item.HasToken)?.ServerId ?? 0;
             if (_libraries.Count == 0 && _serverId != 0)
@@ -310,15 +372,24 @@
         _error = null;
         try
         {
-            await LyricsPage.SaveAsync(new LyricsSettingsInput
+            if (!editor.UseManualMaps && !string.IsNullOrEmpty(editor.SectionKey))
             {
-                ServerId = editor.ServerId,
-                AutoCheck = editor.AutoCheck,
-                IntervalHours = editor.IntervalHours,
-                Maps = editor.Maps
-            });
-            _noticeError = false;
-            _notice = "Saved lyrics settings for " + editor.Name + ".";
+                var hadMaps = FilledMaps(editor).Count > 0;
+                var report = await LyricsPage.SaveLibraryAsync(Input(editor));
+                _noticeError = false;
+                if (report.Maps.Count == 0 && hadMaps)
+                    _notice = "No files from that library were found under the container folder. Existing path prefixes were kept.";
+                else if (report.Maps.Count == 0)
+                    _notice = "No files from that library were found under the container folder.";
+                else
+                    _notice = "Saved lyrics settings for " + editor.Name + ".";
+            }
+            else
+            {
+                await LyricsPage.SaveAsync(Input(editor));
+                _noticeError = false;
+                _notice = "Saved lyrics settings for " + editor.Name + ".";
+            }
             await Load();
         }
         catch (PlexBridgeException exception)
@@ -335,6 +406,74 @@
         {
             _saving = false;
         }
+    }
+
+    private async Task Check(LyricsServerEditor editor)
+    {
+        _saving = true;
+        _notice = null;
+        _error = null;
+        try
+        {
+            var report = await LyricsPage.MapLibraryAsync(editor.ServerId, editor.SectionKey, editor.ContainerFolder);
+            editor.Matches = report.Matches.ToList();
+            editor.UseManualMaps = false;
+            _noticeError = false;
+            _notice = "Checked " + report.SectionTitle + ".";
+        }
+        catch (Exception exception) when (exception is PlexBridgeException or PlexRequestException)
+        {
+            _noticeError = true;
+            _notice = exception.Message;
+        }
+        catch (Exception)
+        {
+            _noticeError = true;
+            _notice = "The library folders could not be checked.";
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private static void OnMappedLibrary(LyricsServerEditor editor, string sectionKey)
+    {
+        if (editor.SectionKey == sectionKey)
+            return;
+        editor.SectionKey = sectionKey;
+        editor.Matches.Clear();
+    }
+
+    private static void OnContainer(LyricsServerEditor editor, string value)
+    {
+        if (editor.ContainerFolder == value)
+            return;
+        editor.ContainerFolder = value ?? "";
+        editor.Matches.Clear();
+    }
+
+    private static LyricsSettingsInput Input(LyricsServerEditor editor)
+        => new()
+        {
+            ServerId = editor.ServerId,
+            AutoCheck = editor.AutoCheck,
+            IntervalHours = editor.IntervalHours,
+            SectionKey = editor.SectionKey,
+            ContainerFolder = editor.ContainerFolder,
+            UseManualMaps = editor.UseManualMaps,
+            Maps = editor.Maps,
+            Matches = editor.UseManualMaps || string.IsNullOrEmpty(editor.SectionKey) ? [] : editor.Matches
+        };
+
+    private static List<LyricsMapInput> FilledMaps(LyricsServerEditor editor)
+        => editor.Maps.Where(map => !string.IsNullOrWhiteSpace(map.PlexPrefix) || !string.IsNullOrWhiteSpace(map.ContainerPrefix)).ToList();
+
+    private static string MatchLine(LyricsLocationMatch match)
+    {
+        if (match.Status == LyricsMapStatus.Ok && !string.IsNullOrWhiteSpace(match.ContainerPrefix))
+            return match.PlexLocation + " → " + match.ContainerPrefix + " · " + LyricsMapStatus.Ok;
+        return match.PlexLocation + " · " + LyricsMapStatus.NotFound;
     }
 
     private async Task OnServer(int serverId)
@@ -599,7 +738,12 @@
         public bool AutoCheck { get; set; }
         public int IntervalHours { get; set; } = 12;
         public DateTimeOffset? LastAutoCheckUtc { get; set; }
-        public List<string> LibraryLocations { get; set; } = [];
+        public string SectionKey { get; set; } = "";
+        public string ContainerFolder { get; set; } = "/music";
+        public bool UseManualMaps { get; set; }
+        public string? LibraryNote { get; set; }
+        public List<PlexSectionInfo> Libraries { get; set; } = [];
         public List<LyricsMapInput> Maps { get; set; } = [];
+        public List<LyricsLocationMatch> Matches { get; set; } = [];
     }
 }

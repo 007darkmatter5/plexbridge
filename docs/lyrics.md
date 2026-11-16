@@ -29,14 +29,20 @@ Instrumental records from LRCLIB are skipped. No empty file is written.
 
 ## Path mapping
 
-Plex returns the path it sees, such as `/mnt/user/media/music/Artist/Album/01.flac` or `D:\Music\Artist\Album\01.flac`. The container has to see that file at a path of its own. On the Lyrics page, each server stores one or more pairs:
+Plex returns the path it sees, such as `/mnt/user/media/music/Artist/Album/01.flac` or `D:\Music\Artist\Album\01.flac`. The container has to see that file at a path of its own.
 
-| Plex path prefix | Container path |
-| --- | --- |
-| `/mnt/user/media/music` | `/music` |
-| `D:\Music` | `/music` |
+On the Lyrics page, choose the music library and the folder mounted in this container. The usual folder is `/music`. PlexBridge reads that library's folders from `GET /library/sections` (the `Location` paths on the artist section) and maps each one.
 
-The longest prefix that matches on a folder boundary wins. `D:\Music` and `d:\music` match. Linux prefixes are case-sensitive. The mapped path has to stay under the container prefix. Prefixes such as `/config`, `/app`, and `/` are rejected so a mapping cannot point at the database or the app.
+A library can list more than one folder. For each folder, PlexBridge looks at the container mount:
+
+- If the mount contains a directory named with the last part of the Plex folder, and a sample track from that folder is in it, that directory is the match. `/mnt/user/media/music` and `/mnt/user/media/classical` under `/music` become `/music/music` and `/music/classical`.
+- Otherwise it checks whether those tracks sit directly under the mount. `/mnt/user/media/music` mounted at `/music` stays `/music`.
+
+It reads a few real tracks (up to five per folder, and at most three pages) and checks that the files exist. Each folder is shown as a mapped path with **OK**, or **Not found**. A check that finds nothing does not erase prefixes that were already saved.
+
+When a file is translated, the longest prefix that matches on a folder boundary wins. `D:\Music` and `d:\music` match. Linux prefixes are case-sensitive. The mapped path has to stay under the container prefix. Prefixes such as `/config`, `/app`, and `/` are rejected so a mapping cannot point at the database or the app.
+
+**Advanced** is collapsed. Use it only to type prefixes by hand when the library mapping is not the right one. Those prefixes replace the library mapping. Prefixes saved by an older version stay in use until a library check succeeds.
 
 The scan says **Path not reachable** when no prefix matches or the audio file is not at the mapped path. It says **Path not writable** when the file is there and the folder cannot be written. Those rows are not selected.
 
@@ -79,4 +85,4 @@ The allowlist accepts that one refresh path and the music reads (`type` 8, 9, or
 
 If a lookup fails, or a new track's file is not reachable or not writable, the cursor stays put and the next run tries that window again. Tracks that were written are skipped because the sidecar is now there. Use the Lyrics page when you want to preview the rest of the library.
 
-The setting is stored in `LyricsSettings`. That table is added by an EF Core migration on startup. Saved servers, encrypted tokens, slots, and the keys folder are not rewritten.
+The setting is stored in `LyricsSettings`. That table is added by an EF Core migration on startup. Choosing a library adds columns for the library id, the container folder, and the last check. Saved servers, encrypted tokens, slots, path prefixes, and the keys folder are not rewritten.

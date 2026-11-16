@@ -83,6 +83,20 @@ public sealed class PlexLyricsClient(IPlexTransport reads, IPlexWriteTransport w
         return items;
     }
 
+    /// <summary>One page of tracks, used to sample file paths. This does not log the token.</summary>
+    public async Task<PlexCatalogPage> ReadTrackPageAsync(Uri baseUri, string token, string sectionKey, int start, CancellationToken cancellationToken)
+    {
+        if (sectionKey.Length is 0 or > 10 || !sectionKey.All(char.IsDigit))
+            throw new PlexRequestException("The library id is not valid.");
+        if (start < 0)
+            start = 0;
+        var size = Math.Clamp(TrackPageSize, 1, 100);
+        var relative = $"/library/sections/{sectionKey}/all?type=10&X-Plex-Container-Start={start}&X-Plex-Container-Size={size}";
+        return PlexTrackParser.Parse(await GetAsync(baseUri, token, relative, cancellationToken));
+    }
+
+    internal int TrackPageSize { get; set; } = PageSize;
+
     public async Task<PlexCatalogItem?> GetTrackAsync(Uri baseUri, string token, string ratingKey, CancellationToken cancellationToken)
     {
         if (ratingKey.Length is 0 or > 12 || !ratingKey.All(char.IsDigit))
