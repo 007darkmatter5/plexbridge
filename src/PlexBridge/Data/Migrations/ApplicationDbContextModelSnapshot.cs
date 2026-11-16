@@ -209,6 +209,37 @@ namespace PlexBridge.Data.Migrations
                     b.ToTable("AspNetUsers", (string)null);
                 });
 
+            modelBuilder.Entity("PlexBridge.Data.LibraryMount", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ContainerFolder")
+                        .HasMaxLength(400)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PathMapsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("PlexServerConnectionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SectionMatchesJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("UseManualMaps")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PlexServerConnectionId")
+                        .IsUnique();
+
+                    b.ToTable("LibraryMounts", (string)null);
+                });
+
             modelBuilder.Entity("PlexBridge.Data.LibrarySnapshot", b =>
                 {
                     b.Property<int>("Id")
@@ -275,6 +306,10 @@ namespace PlexBridge.Data.Migrations
 
                     b.Property<string>("MusicSectionKey")
                         .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MusicSectionTitle")
+                        .HasMaxLength(200)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("PathMapsJson")
@@ -730,6 +765,17 @@ namespace PlexBridge.Data.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("PlexBridge.Data.LibraryMount", b =>
+                {
+                    b.HasOne("PlexBridge.Data.PlexServerConnection", "Server")
+                        .WithMany()
+                        .HasForeignKey("PlexServerConnectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Server");
                 });
 
             modelBuilder.Entity("PlexBridge.Data.LibrarySnapshot", b =>

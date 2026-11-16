@@ -94,7 +94,8 @@ public sealed class LyricsAutoCheckService(
         }
 
         var since = setting.LastAutoCheckUtc ?? DateTimeOffset.UtcNow;
-        var maps = LyricsPaths.FromJson(setting.PathMapsJson);
+        var mount = await db.LibraryMounts.AsNoTracking().FirstOrDefaultAsync(item => item.PlexServerConnectionId == server.Id, cancellationToken);
+        var maps = PlexBridge.Libraries.LibraryMountStore.ReadMaps(mount, setting);
         if (maps.Count == 0)
         {
             await TouchAsync(setting.PlexServerConnectionId, advance: true, cancellationToken);

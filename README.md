@@ -82,7 +82,7 @@ Plex's own note is [Adding Local Lyrics and Artwork for Music files](https://sup
 
 Both files are UTF-8. Plex staff say to refresh the album's metadata after the files are in place. PlexBridge does that with `PUT /library/metadata/{albumRatingKey}/refresh`, then reads the track again. A lyrics stream is `streamType` 4. When the provider is `com.plexapp.agents.localmedia`, the stream is the sidecar. If that stream is still missing, PlexBridge refreshes that track the same way and reads it once more. It does not start a library scan.
 
-Plex reports the path it sees, which is not the path inside this container. On the Lyrics page, choose the music library and the mounted folder, usually `/music`. PlexBridge reads that library's folders from Plex and maps them, then checks a few real tracks. A folder that is not on the mount is marked not found. Advanced, collapsed on the page, is there when a library mapping is not the right one. The page says when a file is not at the mapped path or the folder is not writable. Details, the LRCLIB matching rules, and the optional new-track check are in [docs/lyrics.md](docs/lyrics.md).
+Plex reports the path it sees, which is not the path inside this container. Mount the folder that contains your libraries, usually `/libraries`, and open Library paths. PlexBridge reads each movie, show, and music library's folders from Plex and maps them by the longest trailing folder name, then checks a few real files. A Windows location such as `M:\Music` matches `/libraries/music`. A folder that is not on the mount is marked not found. `/music` still works when that is the folder you already mounted. Advanced, collapsed on the page, is there when a library mapping is not the right one. Checking paths only reads the mount. Lyrics uses those paths when it writes a file, and the page says when a file is not at the mapped path or the folder is not writable. Details are in [docs/lyrics.md](docs/lyrics.md).
 
 The check for newly added tracks is off until you turn it on. Turning it on does not walk the library you already have. It also never replaces a `.lrc`, a `.txt`, or a lyrics stream that is already there.
 
@@ -143,7 +143,7 @@ Community Apps template: [templates/plexbridge.xml](https://github.com/007darkma
 - Image `ghcr.io/007darkmatter5/plexbridge:latest`
 - Network bridge, WebUI `http://[IP]:[PORT:8080]/`, host port 8080
 - `/mnt/user/appdata/plexbridge` mounted at `/config`
-- Optional music folder mounted read-write at `/music`, used only when you download lyrics
+- Optional libraries folder mounted read-write at `/libraries`. Point it at the folder that contains all your Plex media libraries. Features that write next to media use it (lyrics now). An existing `/music` mount still works.
 - `PUID` 99, `PGID` 100, plus `TZ`
 
 If the package is still private, Unraid cannot pull it. GitHub → your profile → Packages → plexbridge → Package settings → Change visibility → Public.
@@ -160,10 +160,11 @@ If the package is still private, Unraid cannot pull it. GitHub → your profile 
 ## How it's built
 
 - `src/PlexBridge/Plex` — URL checks, address checks, the read allowlists, JSON parsing, and the HTTP client
-- `src/PlexBridge/Lyrics` — LRCLIB matching, sidecar files, path mapping, and the album refresh
+- `src/PlexBridge/Libraries` — the libraries mount and path mapping for movies, shows, and music
+- `src/PlexBridge/Lyrics` — LRCLIB matching, sidecar files, and the album refresh
 - `src/PlexBridge/Watchdog` — stall detection, session parsing, and the watchdog allowlist
 - `src/PlexBridge/Services/PlexServerService.cs` — the only place that stores a token, and only as ciphertext
-- `src/PlexBridge/Data` — Identity, the two server tables, the watchdog tables, and the lyrics settings, with EF Core migrations
+- `src/PlexBridge/Data` — Identity, the two server tables, the watchdog tables, the libraries mount, and the lyrics settings, with EF Core migrations
 - `src/PlexBridge/Components` — MudBlazor UI. Account pages are ordinary form posts. Everything else requires a signed-in admin
 - `tests/PlexBridge.Tests` — policy, parsing, stall detection, encryption, and the anonymous HTTP surface
 

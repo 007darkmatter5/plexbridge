@@ -29,26 +29,28 @@ Instrumental records from LRCLIB are skipped. No empty file is written.
 
 ## Path mapping
 
-Plex returns the path it sees, such as `/mnt/user/media/music/Artist/Album/01.flac` or `D:\Music\Artist\Album\01.flac`. The container has to see that file at a path of its own.
+Plex returns the path it sees, such as `/mnt/user/media/music/Artist/Album/01.flac` or `M:\Music\Artist\Album\01.flac`. The container has to see that file at a path of its own.
 
-On the Lyrics page, choose the music library and the folder mounted in this container. The usual folder is `/music`. PlexBridge reads that library's folders from `GET /library/sections` (the `Location` paths on the artist section) and maps each one.
+Library paths is the settings page for that mount. The usual folder is `/libraries`: the parent folder that contains every Plex library, mounted read-write. `/music` still works when that is the folder you already mounted. PlexBridge reads every movie, show, and music library from `GET /library/sections` (the `Location` paths) and maps each one. Lyrics uses the same paths.
 
-A library can list more than one folder. For each folder, PlexBridge looks at the container mount:
+A library can list more than one folder. For each folder, PlexBridge takes the trailing parts of the Plex path and looks for the longest one that exists under the mount. The match is case-sensitive first, then case-insensitive. It then checks a few real files.
 
-- If the mount contains a directory named with the last part of the Plex folder, and a sample track from that folder is in it, that directory is the match. `/mnt/user/media/music` and `/mnt/user/media/classical` under `/music` become `/music/music` and `/music/classical`.
-- Otherwise it checks whether those tracks sit directly under the mount. `/mnt/user/media/music` mounted at `/music` stays `/music`.
+- `/mnt/user/media/music` with the media share mounted at `/libraries` becomes `/libraries/music`.
+- `M:\Music` becomes `/libraries/music` when that folder is there, even if the on-disk name is `music`.
+- `D:\Media\Music` becomes `/libraries/Media/Music` when that longer path is the one that holds the files.
+- A folder mounted directly, such as `/mnt/user/media/music` mounted at `/music`, stays `/music` when the files sit in the mount itself.
 
-It reads a few real tracks (up to five per folder, and at most three pages) and checks that the files exist. Each folder is shown as a mapped path with **OK**, or **Not found**. A check that finds nothing does not erase prefixes that were already saved.
+It reads a few real items (up to five per folder, and at most three pages) and checks that the files exist. Each library is shown as **OK** or **Not found**. A check that finds nothing does not erase prefixes that were already saved. Checking paths only reads the mount. It does not write lyrics.
 
-When a file is translated, the longest prefix that matches on a folder boundary wins. `D:\Music` and `d:\music` match. Linux prefixes are case-sensitive. The mapped path has to stay under the container prefix. Prefixes such as `/config`, `/app`, and `/` are rejected so a mapping cannot point at the database or the app.
+When a file is translated, the longest prefix that matches on a folder boundary wins. `M:\Music` and `m:\music` match. Linux prefixes are case-sensitive. The mapped path has to stay under the container prefix. Prefixes such as `/config`, `/app`, and `/` are rejected so a mapping cannot point at the database or the app.
 
-**Advanced** is collapsed. Use it only to type prefixes by hand when the library mapping is not the right one. Those prefixes replace the library mapping. Prefixes saved by an older version stay in use until a library check succeeds.
+**Advanced** is collapsed on Library paths and on the Lyrics page. Use it only to type prefixes by hand when the library mapping is not the right one. Those prefixes replace the library mapping. Prefixes saved by an older version stay in use until a library check succeeds. The music library dropdown shows the library name.
 
-The scan says **Path not reachable** when no prefix matches or the audio file is not at the mapped path. It says **Path not writable** when the file is there and the folder cannot be written. Those rows are not selected.
+The scan says **Path not reachable** when no prefix matches or the audio file is not at the mapped path. It says **Path not writable** when the file is there and the folder cannot be written. Those rows are not selected. Writing the lyrics files is the only change, and it waits until you confirm.
 
-On Unraid, add the optional **Music** path in the template. It mounts the share read-write at `/music`. The container does not change ownership of that share. Plex has to be able to read the new files. Running both containers as `PUID` 99 and `PGID` 100 is the usual way.
+On Unraid, add the optional **Libraries** path in the template. Point it at the folder that contains all your Plex media libraries. It mounts that share read-write at `/libraries`. The container does not change ownership of that share. Plex has to be able to read the new files. Running both containers as `PUID` 99 and `PGID` 100 is the usual way.
 
-The Docker image only prepares `/config`. The music mount is optional and is not required for migration or the watchdog.
+The Docker image only prepares `/config`. The libraries mount is optional and is not required for migration or the watchdog.
 
 ## How a match is chosen
 
@@ -85,4 +87,4 @@ The allowlist accepts that one refresh path and the music reads (`type` 8, 9, or
 
 If a lookup fails, or a new track's file is not reachable or not writable, the cursor stays put and the next run tries that window again. Tracks that were written are skipped because the sidecar is now there. Use the Lyrics page when you want to preview the rest of the library.
 
-The setting is stored in `LyricsSettings`. That table is added by an EF Core migration on startup. Choosing a library adds columns for the library id, the container folder, and the last check. Saved servers, encrypted tokens, slots, path prefixes, and the keys folder are not rewritten.
+The setting is stored in `LyricsSettings`. The shared path maps live in `LibraryMounts`. Both tables are added by EF Core migrations on startup. An older database keeps its saved prefixes, and those prefixes are copied into `LibraryMounts` without rewriting servers, encrypted tokens, slots, or the keys folder.

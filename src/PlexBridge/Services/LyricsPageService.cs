@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using PlexBridge.Data;
+using PlexBridge.Libraries;
 using PlexBridge.Lyrics;
 using PlexBridge.Plex;
 using PlexBridge.Security;
@@ -18,6 +19,7 @@ public sealed class LyricsSettingsInput
     public bool AutoCheck { get; set; }
     public int IntervalHours { get; set; } = 12;
     public string? SectionKey { get; set; }
+    public string? SectionTitle { get; set; }
     public string? ContainerFolder { get; set; }
     public bool UseManualMaps { get; set; }
     public List<LyricsMapInput> Maps { get; set; } = [];
@@ -42,6 +44,7 @@ public sealed record LyricsServerForm(
     DateTimeOffset? LastAutoCheckUtc,
     IReadOnlyList<LyricsPathMap> Maps,
     string? SectionKey,
+    string? SectionTitle,
     string? ContainerFolder,
     bool UseManualMaps,
     IReadOnlyList<LyricsLocationMatch> Matches);
@@ -95,7 +98,11 @@ public sealed class LyricsPageService(
         await using var db = await databases.CreateDbContextAsync(cancellationToken);
         var servers = await db.PlexServers.AsNoTracking().OrderBy(server => server.Slot).ThenBy(server => server.Id).ToListAsync(cancellationToken);
         var settings = await db.LyricsSettings.AsNoTracking().ToListAsync(cancellationToken);
-        return servers.Select(server => Form(server, settings.FirstOrDefault(item => item.PlexServerConnectionId == server.Id))).ToList();
+        var mounts = await db.LibraryMounts.AsNoTracking().ToListAsync(cancellationToken);
+        return servers.Select(server => Form(
+            server,
+            settings.FirstOrDefault(item => item.PlexServerConnectionId == server.Id),
+            mounts.FirstOrDefault(item => item.PlexServerConnectionId == server.Id))).ToList();
     }
 
     public async Task SaveAsync(LyricsSettingsInput input, CancellationToken cancellationToken = default)
@@ -112,23 +119,30 @@ public sealed class LyricsPageService(
 
         await using var db = await databases.CreateDbContextAsync(cancellationToken);
         var row = await LoadOrCreateAsync(db, input.ServerId, cancellationToken);
+        var mount = await db.LibraryMounts.FirstOrDefaultAsync(item => item.PlexServerConnectionId == input.ServerId, cancellationToken);
         var turningOn = input.AutoCheck && !row.AutoCheckEnabled;
         row.PathMapsJson = LyricsPaths.ToJson(normalized);
         row.MusicSectionKey = section;
+        row.MusicSectionTitle = CleanTitle(input.SectionTitle);
         row.ContainerFolder = container;
         row.UseManualMaps = input.UseManualMaps;
         row.LocationMatchesJson = input.UseManualMaps || input.Matches.Count == 0
             ? null
             : LyricsLibraryMapper.MatchesToJson(input.Matches);
         ApplySchedule(row, input.AutoCheck, input.IntervalHours, turningOn);
+        var replaceSections = input.UseManualMaps || (!string.IsNullOrEmpty(section) && input.Matches.Count > 0);
+        var sections = input.UseManualMaps || string.IsNullOrEmpty(section) || input.Matches.Count == 0
+            ? null
+            : LibraryMountStore.MergeSection(mount?.SectionMatchesJson, MusicSection(section, row.MusicSectionTitle, input.Matches));
+        await LibraryMountStore.UpsertAsync(db, input.ServerId, container, input.UseManualMaps, row.PathMapsJson, sections, replaceSections, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
     }
 
     public async Task<LyricsLibraryReport> MapLibraryAsync(int serverId, string? sectionKey, string? containerFolder, CancellationToken cancellationToken = default)
     {
         var section = CleanSection(sectionKey) ?? throw new PlexBridgeException("Choose a music library.");
-        var container = CleanContainer(string.IsNullOrWhiteSpace(containerFolder) ? LyricsLibraryMapper.DefaultContainer : containerFolder)
-            ?? throw new PlexBridgeException("The container path has to be a full path, such as /music.");
+        var container = CleanContainer(LibraryPathMapper.ResolveContainer(containerFolder))
+            ?? throw new PlexBridgeException("The container path has to be a full path, such as /libraries.");
 
         var (uri, token) = await OpenAsync(serverId, cancellationToken);
         var sections = await libraries.GetSectionsAsync(uri, token, cancellationToken);
@@ -153,14 +167,19 @@ public sealed class LyricsPageService(
             start += batch.Items.Count;
             if (batch.Total is int total && start >= total)
                 break;
-            if (LyricsLibraryMapper.HasEnoughSamples(library.Locations, samples))
+            if (LibraryPathMapper.HasEnoughSamples(library.Locations, samples))
                 break;
         }
 
-        if (!LyricsLibraryMapper.TryMatch(library.Locations, container, samples, Directory.Exists, File.Exists, out var matches, out var maps, out var error))
+        if (!LibraryPathMapper.TryMatch(library.Locations, container, samples, Directory.Exists, File.Exists, out var matches, out var maps, out var error, LibraryPathMapper.ListEntries))
             throw new PlexBridgeException(error);
 
-        return new LyricsLibraryReport(library.Key, library.Title, container, matches, maps);
+        return new LyricsLibraryReport(
+            library.Key,
+            library.Title,
+            container,
+            matches.Select(match => new LyricsLocationMatch(match.PlexLocation, match.ContainerPrefix, match.Status, match.SamplesChecked, match.SamplesFound)).ToList(),
+            maps.Select(map => new LyricsPathMap(map.PlexPrefix, map.ContainerPrefix)).ToList());
     }
 
     public async Task<LyricsLibraryReport> SaveLibraryAsync(LyricsSettingsInput input, CancellationToken cancellationToken = default)
@@ -171,14 +190,41 @@ public sealed class LyricsPageService(
 
         await using var db = await databases.CreateDbContextAsync(cancellationToken);
         var row = await LoadOrCreateAsync(db, input.ServerId, cancellationToken);
+        var mount = await db.LibraryMounts.FirstOrDefaultAsync(item => item.PlexServerConnectionId == input.ServerId, cancellationToken);
         var turningOn = input.AutoCheck && !row.AutoCheckEnabled;
-        var maps = report.Maps.Count > 0 ? report.Maps : LyricsPaths.FromJson(row.PathMapsJson);
-        row.PathMapsJson = LyricsPaths.ToJson(maps);
+        var existing = LibraryMountStore.ReadMaps(mount, row)
+            .Select(map => new LibraryPathMap(map.PlexPrefix, map.ContainerPrefix))
+            .ToList();
+        var checkedPrefixes = new List<string>();
+        foreach (var match in report.Matches)
+        {
+            if (LyricsPaths.TryNormalizePlexPrefix(match.PlexLocation, out var prefix, out _))
+                checkedPrefixes.Add(prefix);
+        }
+
+        var merged = report.Maps.Count == 0
+            ? existing
+            : LibraryPathMapper.MergeMaps(
+                existing,
+                checkedPrefixes,
+                report.Maps.Select(map => new LibraryPathMap(map.PlexPrefix, map.ContainerPrefix)).ToList());
+        if (report.Maps.Count > 0)
+            row.PathMapsJson = LyricsPaths.ToJson(merged.Select(map => new LyricsPathMap(map.PlexPrefix, map.ContainerPrefix)).ToList());
         row.MusicSectionKey = report.SectionKey;
+        row.MusicSectionTitle = report.SectionTitle;
         row.ContainerFolder = report.ContainerFolder;
         row.UseManualMaps = false;
         row.LocationMatchesJson = LyricsLibraryMapper.MatchesToJson(report.Matches);
         ApplySchedule(row, input.AutoCheck, input.IntervalHours, turningOn);
+        await LibraryMountStore.UpsertAsync(
+            db,
+            input.ServerId,
+            report.ContainerFolder,
+            false,
+            row.PathMapsJson,
+            LibraryMountStore.MergeSection(mount?.SectionMatchesJson, MusicSection(report.SectionKey, report.SectionTitle, report.Matches)),
+            true,
+            cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         return report;
     }
@@ -260,7 +306,23 @@ public sealed class LyricsPageService(
         return container;
     }
 
-    private static LyricsServerForm Form(PlexServerConnection server, LyricsSetting? setting)
+    private static string? CleanTitle(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+            return null;
+        var text = title.Trim();
+        return text.Length > 200 ? text[..200] : text;
+    }
+
+    private static LibrarySectionMatch MusicSection(string sectionKey, string? title, IReadOnlyList<LyricsLocationMatch> matches)
+        => new(
+            sectionKey,
+            string.IsNullOrWhiteSpace(title) ? "Music" : title,
+            "artist",
+            matches.Count > 0 && matches.All(match => match.Status == LyricsMapStatus.Ok) ? LibraryMapStatus.Ok : LibraryMapStatus.NotFound,
+            matches.Select(match => new LibraryLocationMatch(match.PlexLocation, match.ContainerPrefix, match.Status, match.SamplesChecked, match.SamplesFound)).ToList());
+
+    private static LyricsServerForm Form(PlexServerConnection server, LyricsSetting? setting, LibraryMount? mount)
     {
         return new LyricsServerForm(
             server.Id,
@@ -271,10 +333,11 @@ public sealed class LyricsPageService(
             setting?.AutoCheckEnabled ?? false,
             setting?.AutoCheckIntervalHours is > 0 and <= 168 ? setting.AutoCheckIntervalHours : 12,
             setting?.LastAutoCheckUtc,
-            LyricsPaths.FromJson(setting?.PathMapsJson),
+            LibraryMountStore.ReadMaps(mount, setting),
             setting?.MusicSectionKey,
-            setting?.ContainerFolder,
-            setting?.UseManualMaps ?? false,
+            setting?.MusicSectionTitle,
+            LibraryMountStore.ReadContainer(mount, setting),
+            LibraryMountStore.ReadManual(mount, setting),
             LyricsLibraryMapper.MatchesFromJson(setting?.LocationMatchesJson));
     }
 }

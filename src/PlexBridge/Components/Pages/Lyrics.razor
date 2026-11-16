@@ -45,15 +45,16 @@
                 }
                 <MudText Typo="Typo.body2">
                     Choose the music library and the folder mounted in this container. PlexBridge reads that library's folders from Plex and maps them.
-                    The usual container folder is /music.
+                    The usual container folder is /libraries. /music still works if that is the folder you mounted.
+                    The same paths are on Library paths, for movies and TV as well.
                 </MudText>
                 <MudGrid Spacing="2">
                     <MudItem xs="12" md="6">
-                        <MudSelect T="string" Value="editor.SectionKey" ValueChanged="@(key => OnMappedLibrary(editor, key))" Label="Music library" Variant="Variant.Outlined" Disabled="_saving || !editor.HasToken" AnchorOrigin="Origin.BottomCenter">
+                        <MudSelect T="string" Value="editor.SectionKey" ValueChanged="@(key => OnMappedLibrary(editor, key))" ToStringFunc="@(key => LibraryLabel(editor, key))" Label="Music library" Variant="Variant.Outlined" Disabled="_saving || !editor.HasToken" AnchorOrigin="Origin.BottomCenter">
                             <MudSelectItem T="string" Value="@("")">Choose a library</MudSelectItem>
                             @if (!string.IsNullOrEmpty(editor.SectionKey) && editor.Libraries.All(item => item.Key != editor.SectionKey))
                             {
-                                <MudSelectItem T="string" Value="@editor.SectionKey">Saved library @editor.SectionKey</MudSelectItem>
+                                <MudSelectItem T="string" Value="@editor.SectionKey">@LibraryLabel(editor, editor.SectionKey)</MudSelectItem>
                             }
                             @foreach (var library in editor.Libraries)
                             {
@@ -62,7 +63,7 @@
                         </MudSelect>
                     </MudItem>
                     <MudItem xs="12" md="6">
-                        <MudTextField T="string" Value="editor.ContainerFolder" ValueChanged="@(value => OnContainer(editor, value))" Label="Container folder" Variant="Variant.Outlined" Disabled="_saving" HelperText="Usually /music" Immediate="true" />
+                        <MudTextField T="string" Value="editor.ContainerFolder" ValueChanged="@(value => OnContainer(editor, value))" Label="Container folder" Variant="Variant.Outlined" Disabled="_saving" HelperText="Usually /libraries" Immediate="true" />
                     </MudItem>
                 </MudGrid>
                 @if (!string.IsNullOrEmpty(editor.LibraryNote))
@@ -71,13 +72,13 @@
                 }
                 @if (editor.UseManualMaps)
                 {
-                    <MudText Typo="Typo.caption">Manual path prefixes</MudText>
+                    <MudText Typo="Typo.caption">Manual path prefixes are what lyrics write with until you turn them off.</MudText>
                     @foreach (var map in FilledMaps(editor))
                     {
                         <MudText Typo="Typo.body2" Class="pb-path">@map.PlexPrefix → @map.ContainerPrefix</MudText>
                     }
                 }
-                else if (editor.Matches.Count > 0)
+                @if (!editor.UseManualMaps && editor.Matches.Count > 0)
                 {
                     @foreach (var match in editor.Matches)
                     {
@@ -92,7 +93,7 @@
                         }
                     }
                 }
-                else if (FilledMaps(editor).Count > 0)
+                else if (!editor.UseManualMaps && FilledMaps(editor).Count > 0)
                 {
                     <MudText Typo="Typo.caption">Saved path prefixes</MudText>
                     @foreach (var map in FilledMaps(editor))
@@ -100,7 +101,20 @@
                         <MudText Typo="Typo.body2" Class="pb-path">@map.PlexPrefix → @map.ContainerPrefix</MudText>
                     }
                 }
-                <MudButton Variant="Variant.Outlined" Disabled="_saving || editor.UseManualMaps || string.IsNullOrEmpty(editor.SectionKey)" OnClick="() => Check(editor)">Check paths</MudButton>
+                @if (editor.UseManualMaps && editor.Matches.Count > 0)
+                {
+                    <MudText Typo="Typo.caption">Checked paths. Manual prefixes stay in use until you turn them off.</MudText>
+                    @foreach (var match in editor.Matches)
+                    {
+                        <MudText Typo="Typo.body2" Class="pb-path">@MatchLine(match)</MudText>
+                    }
+                }
+                <MudTooltip Text="@CheckReason(editor)">
+                    <span class="d-inline-block">
+                        <MudButton Variant="Variant.Outlined" Disabled="@(!CanCheck(editor))" OnClick="() => Check(editor)">Check paths</MudButton>
+                    </span>
+                </MudTooltip>
+                <MudText Typo="Typo.caption">@CheckReason(editor)</MudText>
                 <MudExpansionPanels>
                     <MudExpansionPanel Text="Advanced" Expanded="false">
                         <MudStack Spacing="2">
@@ -152,7 +166,7 @@
                     </MudSelect>
                 </MudItem>
                 <MudItem xs="12" md="4">
-                    <MudSelect T="string" Value="_sectionKey" ValueChanged="OnLibrary" Label="Music library" Variant="Variant.Outlined" Disabled="_busy || _libraries.Count == 0" AnchorOrigin="Origin.BottomCenter">
+                    <MudSelect T="string" Value="_sectionKey" ValueChanged="OnLibrary" ToStringFunc="@ScanLibraryLabel" Label="Music library" Variant="Variant.Outlined" Disabled="_busy || _libraries.Count == 0" AnchorOrigin="Origin.BottomCenter">
                         @foreach (var library in _libraries)
                         {
                             <MudSelectItem T="string" Value="@library.Key">@library.Title</MudSelectItem>
@@ -183,7 +197,11 @@
                 <MudText Typo="Typo.caption">@_catalogNote</MudText>
             }
             <MudStack Row="true" Spacing="1">
-                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy || _serverId == 0 || string.IsNullOrEmpty(_sectionKey)" OnClick="Scan">Scan</MudButton>
+                    <MudTooltip Text="@ScanReason()">
+                        <span class="d-inline-block">
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy || _serverId == 0 || string.IsNullOrEmpty(_sectionKey)" OnClick="Scan">Scan</MudButton>
+                        </span>
+                    </MudTooltip>
                 @if (_job?.State == LyricsJobState.Running)
                 {
                     <MudButton Variant="Variant.Outlined" Color="Color.Default" OnClick="Cancel">Cancel</MudButton>
@@ -221,7 +239,12 @@
                 <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
                     <MudButton Variant="Variant.Outlined" Disabled="_busy" OnClick="() => SelectVisible(true)">Select ready</MudButton>
                     <MudButton Variant="Variant.Outlined" Disabled="_busy" OnClick="() => SelectVisible(false)">Clear</MudButton>
-                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy || SelectedCount() == 0" OnClick="WriteSelected">Write selected</MudButton>
+                    <MudTooltip Text="@WriteReason()">
+                        <span class="d-inline-block">
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy || SelectedCount() == 0" OnClick="WriteSelected">Write selected</MudButton>
+                        </span>
+                    </MudTooltip>
+                    <MudText Typo="Typo.caption">@WriteReason()</MudText>
                 </MudStack>
                 @if (_pageCount > 1)
                 {
@@ -334,7 +357,8 @@
                 IntervalHours = form.IntervalHours,
                 LastAutoCheckUtc = form.LastAutoCheckUtc,
                 SectionKey = form.SectionKey ?? "",
-                ContainerFolder = string.IsNullOrWhiteSpace(form.ContainerFolder) ? "/music" : form.ContainerFolder,
+                SectionTitle = form.SectionTitle ?? "",
+                ContainerFolder = LibraryPathMapper.ResolveContainer(form.ContainerFolder),
                 UseManualMaps = form.UseManualMaps,
                 Maps = form.Maps.Select(map => new LyricsMapInput { PlexPrefix = map.PlexPrefix, ContainerPrefix = map.ContainerPrefix }).ToList(),
                 Matches = form.Matches.ToList()
@@ -344,6 +368,9 @@
                 try
                 {
                     editor.Libraries.AddRange(await LyricsPage.MusicLibrariesAsync(editor.ServerId));
+                    var named = editor.Libraries.FirstOrDefault(item => item.Key == editor.SectionKey);
+                    if (named is not null && !string.IsNullOrWhiteSpace(named.Title))
+                        editor.SectionTitle = named.Title;
                 }
                 catch (Exception exception) when (exception is PlexBridgeException or PlexRequestException)
                 {
@@ -417,7 +444,7 @@
         {
             var report = await LyricsPage.MapLibraryAsync(editor.ServerId, editor.SectionKey, editor.ContainerFolder);
             editor.Matches = report.Matches.ToList();
-            editor.UseManualMaps = false;
+            editor.SectionTitle = report.SectionTitle;
             _noticeError = false;
             _notice = "Checked " + report.SectionTitle + ".";
         }
@@ -442,6 +469,7 @@
         if (editor.SectionKey == sectionKey)
             return;
         editor.SectionKey = sectionKey;
+        editor.SectionTitle = editor.Libraries.FirstOrDefault(item => item.Key == sectionKey)?.Title ?? "";
         editor.Matches.Clear();
     }
 
@@ -460,6 +488,7 @@
             AutoCheck = editor.AutoCheck,
             IntervalHours = editor.IntervalHours,
             SectionKey = editor.SectionKey,
+            SectionTitle = string.IsNullOrEmpty(editor.SectionKey) ? null : LibraryLabel(editor, editor.SectionKey),
             ContainerFolder = editor.ContainerFolder,
             UseManualMaps = editor.UseManualMaps,
             Maps = editor.Maps,
@@ -468,6 +497,48 @@
 
     private static List<LyricsMapInput> FilledMaps(LyricsServerEditor editor)
         => editor.Maps.Where(map => !string.IsNullOrWhiteSpace(map.PlexPrefix) || !string.IsNullOrWhiteSpace(map.ContainerPrefix)).ToList();
+
+    private static string LibraryLabel(LyricsServerEditor editor, string? key)
+        => LibraryNames.Label(key, editor.SectionTitle, editor.Libraries.Select(library => (library.Key, library.Title)));
+
+    private string ScanLibraryLabel(string? key)
+        => LibraryNames.Label(key, null, _libraries.Select(library => (library.Key, library.Title)));
+
+    private bool CanCheck(LyricsServerEditor editor)
+        => !_saving && editor.HasToken && !string.IsNullOrEmpty(editor.SectionKey);
+
+    private string CheckReason(LyricsServerEditor editor)
+    {
+        if (!editor.HasToken)
+            return "This server has no token yet.";
+        if (string.IsNullOrEmpty(editor.SectionKey))
+            return "Choose a music library first.";
+        if (_saving)
+            return "Wait until the current save finishes.";
+        if (editor.UseManualMaps)
+            return "Check paths only reads the mount. It does not write lyrics. Manual prefixes stay in use until you turn them off.";
+        return "Check paths only reads the mount and a few files. It does not write lyrics. The Read-only badge does not block it.";
+    }
+
+    private string ScanReason()
+    {
+        if (_busy)
+            return "Wait until the current run finishes.";
+        if (_serverId == 0)
+            return "Save a server before scanning.";
+        if (string.IsNullOrEmpty(_sectionKey))
+            return "Choose a music library first.";
+        return "Scan looks up lyrics. It does not write files.";
+    }
+
+    private string WriteReason()
+    {
+        if (_busy)
+            return "Wait until the current run finishes.";
+        if (SelectedCount() == 0)
+            return "Select lyrics that are ready to write. Writing files is the only change, and it waits until you confirm.";
+        return "This writes the selected lyrics files. Nothing is written until you confirm.";
+    }
 
     private static string MatchLine(LyricsLocationMatch match)
     {
@@ -739,7 +810,8 @@
         public int IntervalHours { get; set; } = 12;
         public DateTimeOffset? LastAutoCheckUtc { get; set; }
         public string SectionKey { get; set; } = "";
-        public string ContainerFolder { get; set; } = "/music";
+        public string SectionTitle { get; set; } = "";
+        public string ContainerFolder { get; set; } = "/libraries";
         public bool UseManualMaps { get; set; }
         public string? LibraryNote { get; set; }
         public List<PlexSectionInfo> Libraries { get; set; } = [];

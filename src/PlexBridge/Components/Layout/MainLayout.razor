@@ -11,7 +11,9 @@
         <MudIcon Icon="@Icons.Material.Filled.Hub" Class="ml-2 mr-2" />
         <MudText Typo="Typo.h6">PlexBridge</MudText>
         <MudSpacer />
-        <MudChip T="string" Color="Color.Default" Variant="Variant.Outlined" Size="Size.Small" Icon="@Icons.Material.Filled.Visibility" Class="mr-2">Read-only</MudChip>
+        <MudTooltip Text="Nothing is written until you confirm. Checking library paths only reads the mount.">
+            <MudChip T="string" Color="Color.Default" Variant="Variant.Outlined" Size="Size.Small" Icon="@Icons.Material.Filled.Visibility" Class="mr-2">Read-only</MudChip>
+        </MudTooltip>
     </MudAppBar>
     <MudDrawer id="nav-drawer" @bind-Open="_drawerOpen" ClipMode="DrawerClipMode.Always" Elevation="2" Breakpoint="Breakpoint.Md">
         <NavMenu />
