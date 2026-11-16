@@ -138,6 +138,18 @@ public class WatchdogIncident
     public DateTimeOffset? ResolvedUtc { get; set; }
 }
 
+/// <summary>Per-server lyrics path maps and the optional new-track check. Tokens are not stored here.</summary>
+public class LyricsSetting
+{
+    public int Id { get; set; }
+    public int PlexServerConnectionId { get; set; }
+    public PlexServerConnection? Server { get; set; }
+    public string PathMapsJson { get; set; } = "[]";
+    public bool AutoCheckEnabled { get; set; }
+    public int AutoCheckIntervalHours { get; set; } = 12;
+    public DateTimeOffset? LastAutoCheckUtc { get; set; }
+}
+
 public static class ServerStatuses
 {
     public const string NotChecked = "Not checked";

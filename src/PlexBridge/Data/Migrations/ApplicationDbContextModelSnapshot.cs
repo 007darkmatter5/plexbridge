@@ -251,6 +251,36 @@ namespace PlexBridge.Data.Migrations
                     b.ToTable("LibrarySnapshots", (string)null);
                 });
 
+            modelBuilder.Entity("PlexBridge.Data.LyricsSetting", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("AutoCheckEnabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("AutoCheckIntervalHours")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset?>("LastAutoCheckUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PathMapsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("PlexServerConnectionId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PlexServerConnectionId")
+                        .IsUnique();
+
+                    b.ToTable("LyricsSettings", (string)null);
+                });
+
             modelBuilder.Entity("PlexBridge.Data.MigrationAudit", b =>
                 {
                     b.Property<int>("Id")
@@ -692,6 +722,17 @@ namespace PlexBridge.Data.Migrations
                 {
                     b.HasOne("PlexBridge.Data.PlexServerConnection", "Server")
                         .WithMany("Libraries")
+                        .HasForeignKey("PlexServerConnectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Server");
+                });
+
+            modelBuilder.Entity("PlexBridge.Data.LyricsSetting", b =>
+                {
+                    b.HasOne("PlexBridge.Data.PlexServerConnection", "Server")
+                        .WithMany()
                         .HasForeignKey("PlexServerConnectionId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();

@@ -12,6 +12,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<MigrationAuditItem> MigrationAuditItems => Set<MigrationAuditItem>();
     public DbSet<WatchdogSetting> WatchdogSettings => Set<WatchdogSetting>();
     public DbSet<WatchdogIncident> WatchdogIncidents => Set<WatchdogIncident>();
+    public DbSet<LyricsSetting> LyricsSettings => Set<LyricsSetting>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -80,6 +81,17 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.ToTable("WatchdogSettings");
             entity.Property(x => x.RecoveryMode).HasMaxLength(20).IsRequired();
             entity.Property(x => x.LogFolder).HasMaxLength(300);
+            entity.HasIndex(x => x.PlexServerConnectionId).IsUnique();
+            entity.HasOne(x => x.Server)
+                .WithMany()
+                .HasForeignKey(x => x.PlexServerConnectionId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<LyricsSetting>(entity =>
+        {
+            entity.ToTable("LyricsSettings");
+            entity.Property(x => x.PathMapsJson).IsRequired();
             entity.HasIndex(x => x.PlexServerConnectionId).IsUnique();
             entity.HasOne(x => x.Server)
                 .WithMany()
