@@ -5,6 +5,7 @@
         <Authorized>
             <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard">Dashboard</MudNavLink>
             <MudNavLink Href="migrate" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.SwapHoriz">Migrate</MudNavLink>
+            <MudNavLink Href="lyrics" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.LibraryMusic">Lyrics</MudNavLink>
             <MudNavLink Href="watchdog" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.HealthAndSafety">Watchdog</MudNavLink>
             <MudNavLink Href="plex" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Link">Plex account</MudNavLink>
             <MudNavLink Href="account/password" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Lock">Password</MudNavLink>
@@ -28,7 +29,7 @@
     </AuthorizeView>
 </MudNavMenu>
 <MudText Typo="Typo.caption" Class="px-4 pt-3 d-block" Style="color: var(--mud-palette-text-disabled)">PlexBridge @AppVersion</MudText>
-<MudText Typo="Typo.caption" Class="px-4 pb-3 d-block" Style="color: var(--mud-palette-text-disabled)">Migration and watchdog</MudText>
+<MudText Typo="Typo.caption" Class="px-4 pb-3 d-block" Style="color: var(--mud-palette-text-disabled)">Migration, lyrics, and watchdog</MudText>
 
 @code {
     private bool _hasAccount = true;

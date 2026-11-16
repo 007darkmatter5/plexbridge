@@ -48,7 +48,7 @@ public class WebAppTests : IClassFixture<PlexBridgeApp>
     {
         await _app.SeedServerAsync();
         using var client = _app.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = true });
-        foreach (var path in new[] { "/", "/servers/1", "/watchdog", "/account/password", "/healthz", "/Account/Login", "/Account/Register" })
+        foreach (var path in new[] { "/", "/servers/1", "/watchdog", "/lyrics", "/account/password", "/healthz", "/Account/Login", "/Account/Register" })
         {
             var response = await client.GetAsync(path);
             var body = await response.Content.ReadAsStringAsync();

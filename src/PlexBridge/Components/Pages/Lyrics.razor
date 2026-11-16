@@ -1,0 +1,605 @@
+@page "/lyrics"
+@attribute [Authorize]
+@implements IDisposable
+@using PlexBridge.Lyrics
+@inject LyricsPageService LyricsPage
+@inject IDialogService Dialogs
+
+<PageTitle>Lyrics · PlexBridge</PageTitle>
+
+<MudStack Spacing="4">
+    <div>
+        <div class="pb-kicker">Music</div>
+        <MudText Typo="Typo.h4" Class="mt-1">Lyrics</MudText>
+        <MudText Typo="Typo.body1" Class="mt-2" Style="max-width: 46rem">
+            Finds lyrics on LRCLIB for tracks in one music library. Synced lyrics are saved as a .lrc file next to the audio.
+            Plain lyrics are saved as a .txt file. Nothing is written until you confirm, and a file that is already there is left alone.
+        </MudText>
+    </div>
+
+    @if (_notice is not null)
+    {
+        <MudAlert Severity="@(_noticeError ? Severity.Error : Severity.Success)" Variant="Variant.Outlined">@_notice</MudAlert>
+    }
+    @if (_error is not null)
+    {
+        <MudAlert Severity="Severity.Error">@_error</MudAlert>
+    }
+
+    @if (_editors.Count == 0 && !_loading)
+    {
+        <MudAlert Severity="Severity.Normal" Variant="Variant.Outlined">Save a server on the dashboard before looking up lyrics.</MudAlert>
+    }
+
+    @foreach (var editor in _editors)
+    {
+        <MudPaper Class="pa-4" Outlined="true" @key="editor.ServerId">
+            <MudStack Spacing="2">
+                <div>
+                    <MudText Typo="Typo.h6">Server @editor.Slot · @editor.Name</MudText>
+                    <MudText Typo="Typo.body2" Class="pb-path">@editor.BaseUrl</MudText>
+                </div>
+                @if (!editor.HasToken)
+                {
+                    <MudAlert Severity="Severity.Warning" Dense="true">This server has no token yet.</MudAlert>
+                }
+                <MudText Typo="Typo.body2">
+                    Plex reports the path it sees. Map that prefix to the folder mounted in this container.
+                    On Unraid that is often /mnt/user/media/music on the Plex side and /music in PlexBridge.
+                </MudText>
+                @if (editor.LibraryLocations.Count > 0)
+                {
+                    <MudText Typo="Typo.caption">Music folders from the last inventory:</MudText>
+                    @foreach (var location in editor.LibraryLocations)
+                    {
+                        <MudText Typo="Typo.body2" Class="pb-path">@location</MudText>
+                    }
+                }
+                else
+                {
+                    <MudText Typo="Typo.caption">Refresh the library inventory on the dashboard to see the folders Plex reported.</MudText>
+                }
+                @foreach (var map in editor.Maps)
+                {
+                    <MudGrid Spacing="2" @key="map">
+                        <MudItem xs="12" md="5">
+                            <MudTextField T="string" @bind-Value="map.PlexPrefix" Label="Plex path prefix" Variant="Variant.Outlined" Disabled="_saving" />
+                        </MudItem>
+                        <MudItem xs="12" md="5">
+                            <MudTextField T="string" @bind-Value="map.ContainerPrefix" Label="Container path" Variant="Variant.Outlined" Disabled="_saving" HelperText="For example /music" />
+                        </MudItem>
+                        <MudItem xs="12" md="2" Class="d-flex align-center">
+                            <MudButton Variant="Variant.Text" Color="Color.Default" Disabled="_saving" OnClick="() => editor.Maps.Remove(map)">Remove</MudButton>
+                        </MudItem>
+                    </MudGrid>
+                }
+                <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
+                    <MudButton Variant="Variant.Outlined" Disabled="_saving" OnClick="() => editor.Maps.Add(new LyricsMapInput())">Add path</MudButton>
+                </MudStack>
+                <MudSwitch T="bool" @bind-Value="editor.AutoCheck" Label="Check newly added tracks" Color="Color.Primary" Disabled="_saving" />
+                <MudText Typo="Typo.caption">
+                    Off by default. When you turn it on, PlexBridge looks up tracks added after that moment.
+                    It does not go back through the library, and it does not replace lyrics that are already there.
+                </MudText>
+                <MudNumericField T="int" @bind-Value="editor.IntervalHours" Label="Hours between checks" Variant="Variant.Outlined" Min="1" Max="168" Disabled="_saving || !editor.AutoCheck" Style="max-width: 16rem" />
+                @if (editor.LastAutoCheckUtc is DateTimeOffset last)
+                {
+                    <MudText Typo="Typo.caption">Last check @last.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudText>
+                }
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_saving" OnClick="() => Save(editor)">Save</MudButton>
+            </MudStack>
+        </MudPaper>
+    }
+
+    <MudPaper Class="pa-4" Outlined="true">
+        <MudStack Spacing="2">
+            <MudText Typo="Typo.h6">Find lyrics</MudText>
+            <MudGrid Spacing="2">
+                <MudItem xs="12" md="4">
+                    <MudSelect T="int" Value="_serverId" ValueChanged="OnServer" Label="Server" Variant="Variant.Outlined" Disabled="_busy" AnchorOrigin="Origin.BottomCenter">
+                        @foreach (var editor in _editors.Where(item => item.HasToken))
+                        {
+                            <MudSelectItem T="int" Value="@editor.ServerId">Server @editor.Slot · @editor.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudSelect T="string" Value="_sectionKey" ValueChanged="OnLibrary" Label="Music library" Variant="Variant.Outlined" Disabled="_busy || _libraries.Count == 0" AnchorOrigin="Origin.BottomCenter">
+                        @foreach (var library in _libraries)
+                        {
+                            <MudSelectItem T="string" Value="@library.Key">@library.Title</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudSelect T="string" Value="_artistKey" ValueChanged="OnArtist" Label="Artist" Variant="Variant.Outlined" Disabled="_busy || _artists.Count == 0" AnchorOrigin="Origin.BottomCenter">
+                        <MudSelectItem T="string" Value="@("")">All artists</MudSelectItem>
+                        @foreach (var artist in _artists)
+                        {
+                            <MudSelectItem T="string" Value="@artist.RatingKey">@artist.Title</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudSelect T="string" @bind-Value="_albumKey" Label="Album" Variant="Variant.Outlined" Disabled="_busy || _albums.Count == 0" AnchorOrigin="Origin.BottomCenter">
+                        <MudSelectItem T="string" Value="@("")">All albums</MudSelectItem>
+                        @foreach (var album in _albums)
+                        {
+                            <MudSelectItem T="string" Value="@album.RatingKey">@AlbumLabel(album)</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+            </MudGrid>
+            @if (_catalogNote is not null)
+            {
+                <MudText Typo="Typo.caption">@_catalogNote</MudText>
+            }
+            <MudStack Row="true" Spacing="1">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy || _serverId == 0 || string.IsNullOrEmpty(_sectionKey)" OnClick="Scan">Scan</MudButton>
+                @if (_job?.State == LyricsJobState.Running)
+                {
+                    <MudButton Variant="Variant.Outlined" Color="Color.Default" OnClick="Cancel">Cancel</MudButton>
+                }
+            </MudStack>
+            @if (_job is not null)
+            {
+                <MudText Typo="Typo.body2">@_job.Status</MudText>
+                @if (_job.State == LyricsJobState.Running && _job.Total > 0)
+                {
+                    <MudProgressLinear Value="@Percent(_job.Done, _job.Total)" />
+                }
+                else if (_job.State == LyricsJobState.Running)
+                {
+                    <MudProgressLinear Indeterminate="true" />
+                }
+            }
+        </MudStack>
+    </MudPaper>
+
+    @if (_tracks.Count > 0)
+    {
+        <MudPaper Class="pa-4" Outlined="true">
+            <MudStack Spacing="2">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Wrap="Wrap.Wrap">
+                    <MudText Typo="Typo.h6">@_job?.LibraryName</MudText>
+                    <MudText Typo="Typo.body2">@Summary()</MudText>
+                </MudStack>
+                <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
+                    <MudButton Variant="@FilterVariant("all")" Color="Color.Primary" OnClick='() => SetFilter("all")'>All</MudButton>
+                    <MudButton Variant="@FilterVariant("ready")" Color="Color.Primary" OnClick='() => SetFilter("ready")'>Ready to write</MudButton>
+                    <MudButton Variant="@FilterVariant("have")" Color="Color.Primary" OnClick='() => SetFilter("have")'>Already has lyrics</MudButton>
+                    <MudButton Variant="@FilterVariant("problem")" Color="Color.Primary" OnClick='() => SetFilter("problem")'>Path and misses</MudButton>
+                </MudStack>
+                <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
+                    <MudButton Variant="Variant.Outlined" Disabled="_busy" OnClick="() => SelectVisible(true)">Select ready</MudButton>
+                    <MudButton Variant="Variant.Outlined" Disabled="_busy" OnClick="() => SelectVisible(false)">Clear</MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_busy || SelectedCount() == 0" OnClick="WriteSelected">Write selected</MudButton>
+                </MudStack>
+                @if (_pageCount > 1)
+                {
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                        <MudButton Variant="Variant.Text" Disabled="_page <= 1" OnClick="() => _page--">Previous</MudButton>
+                        <MudText Typo="Typo.body2">Page @_page of @_pageCount</MudText>
+                        <MudButton Variant="Variant.Text" Disabled="_page >= _pageCount" OnClick="() => _page++">Next</MudButton>
+                    </MudStack>
+                }
+                @foreach (var group in PageGroups())
+                {
+                    <div @key="group.Key">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Wrap="Wrap.Wrap" Class="mt-2">
+                            <MudText Typo="Typo.subtitle1">@group.First().Artist — @group.First().Album</MudText>
+                            @if (!string.IsNullOrEmpty(group.First().AlbumKey) && _job?.State != LyricsJobState.Running)
+                            {
+                                <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="_busy" OnClick="() => RefreshAlbum(group.First().AlbumKey)">Refresh album</MudButton>
+                            }
+                        </MudStack>
+                        <MudSimpleTable Dense="true" Hover="true" Style="overflow-x: auto">
+                            <thead>
+                                <tr>
+                                    <th style="width: 3rem"></th>
+                                    <th>Track</th>
+                                    <th>Status</th>
+                                    <th>Detail</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var track in group)
+                                {
+                                    <tr @key="track.RatingKey">
+                                        <td>
+                                            <MudCheckBox T="bool" Value="track.Selected" ValueChanged="@(value => Toggle(track, value))" Disabled="@(!track.CanSelect || _busy)" Dense="true" />
+                                        </td>
+                                        <td>
+                                            <div>@track.Title</div>
+                                            @if (!string.IsNullOrEmpty(track.FileName))
+                                            {
+                                                <div class="pb-path">@track.FileName</div>
+                                            }
+                                        </td>
+                                        <td>@track.Status</td>
+                                        <td>
+                                            <div>@track.Detail</div>
+                                            @if (!string.IsNullOrWhiteSpace(track.ApplyResult))
+                                            {
+                                                <div>@track.ApplyResult</div>
+                                            }
+                                            @if (track.Status is LyricsStatus.NotReachable or LyricsStatus.NotWritable && !string.IsNullOrWhiteSpace(track.PlexPath))
+                                            {
+                                                <div class="pb-path">@track.PlexPath</div>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </MudSimpleTable>
+                    </div>
+                }
+            </MudStack>
+        </MudPaper>
+    }
+</MudStack>
+
+@code {
+    private readonly List<LyricsServerEditor> _editors = [];
+    private readonly List<PlexSectionInfo> _libraries = [];
+    private readonly List<PlexCatalogItem> _artists = [];
+    private readonly List<PlexCatalogItem> _albums = [];
+    private List<LyricsTrackRow> _tracks = [];
+    private bool _loading = true;
+    private bool _saving;
+    private bool _busy;
+    private string? _error;
+    private string? _notice;
+    private bool _noticeError;
+    private string? _catalogNote;
+    private int _serverId;
+    private string _sectionKey = "";
+    private string _artistKey = "";
+    private string _albumKey = "";
+    private string _filter = "all";
+    private int _page = 1;
+    private LyricsJobSnapshot? _job;
+    private PeriodicTimer? _timer;
+    private CancellationTokenSource? _poll;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        _loading = _editors.Count == 0;
+        _error = null;
+        try
+        {
+            var forms = await LyricsPage.LoadAsync();
+            _editors.Clear();
+            _editors.AddRange(forms.Select(form => new LyricsServerEditor
+            {
+                ServerId = form.ServerId,
+                Slot = form.Slot,
+                Name = form.Name,
+                BaseUrl = form.BaseUrl,
+                HasToken = form.HasToken,
+                AutoCheck = form.AutoCheck,
+                IntervalHours = form.IntervalHours,
+                LastAutoCheckUtc = form.LastAutoCheckUtc,
+                LibraryLocations = form.LibraryLocations.ToList(),
+                Maps = form.Maps.Select(map => new LyricsMapInput { PlexPrefix = map.PlexPrefix, ContainerPrefix = map.ContainerPrefix }).ToList()
+            }));
+            if (_serverId == 0)
+                _serverId = _editors.FirstOrDefault(item => item.HasToken)?.ServerId ?? 0;
+            if (_libraries.Count == 0 && _serverId != 0)
+                await OnServer(_serverId);
+        }
+        catch (Exception)
+        {
+            _error = "The lyrics settings could not be loaded.";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task Save(LyricsServerEditor editor)
+    {
+        _saving = true;
+        _notice = null;
+        _error = null;
+        try
+        {
+            await LyricsPage.SaveAsync(new LyricsSettingsInput
+            {
+                ServerId = editor.ServerId,
+                AutoCheck = editor.AutoCheck,
+                IntervalHours = editor.IntervalHours,
+                Maps = editor.Maps
+            });
+            _noticeError = false;
+            _notice = "Saved lyrics settings for " + editor.Name + ".";
+            await Load();
+        }
+        catch (PlexBridgeException exception)
+        {
+            _noticeError = true;
+            _notice = exception.Message;
+        }
+        catch (Exception)
+        {
+            _noticeError = true;
+            _notice = "The lyrics settings could not be saved.";
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task OnServer(int serverId)
+    {
+        _serverId = serverId;
+        _libraries.Clear();
+        _artists.Clear();
+        _albums.Clear();
+        _sectionKey = "";
+        _artistKey = "";
+        _albumKey = "";
+        _catalogNote = null;
+        if (serverId == 0)
+            return;
+        _busy = true;
+        try
+        {
+            var libraries = await LyricsPage.MusicLibrariesAsync(serverId);
+            _libraries.AddRange(libraries);
+            _catalogNote = libraries.Count == 0 ? "This server has no music library." : null;
+        }
+        catch (PlexBridgeException exception)
+        {
+            _catalogNote = exception.Message;
+        }
+        catch (PlexRequestException exception)
+        {
+            _catalogNote = exception.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task OnLibrary(string sectionKey)
+    {
+        _sectionKey = sectionKey;
+        _artists.Clear();
+        _albums.Clear();
+        _artistKey = "";
+        _albumKey = "";
+        if (string.IsNullOrEmpty(sectionKey))
+            return;
+        _catalogNote = "Reading artists";
+        try
+        {
+            var artists = await LyricsPage.ArtistsAsync(_serverId, sectionKey);
+            _artists.AddRange(artists.OrderBy(item => item.Title, StringComparer.OrdinalIgnoreCase));
+            _catalogNote = null;
+        }
+        catch (Exception exception) when (exception is PlexBridgeException or PlexRequestException)
+        {
+            _catalogNote = exception.Message;
+        }
+    }
+
+    private async Task OnArtist(string artistKey)
+    {
+        _artistKey = artistKey;
+        _albums.Clear();
+        _albumKey = "";
+        if (string.IsNullOrEmpty(artistKey) || string.IsNullOrEmpty(_sectionKey))
+            return;
+        _catalogNote = "Reading albums";
+        try
+        {
+            var albums = await LyricsPage.AlbumsAsync(_serverId, _sectionKey, artistKey);
+            _albums.AddRange(albums.OrderBy(item => item.Title, StringComparer.OrdinalIgnoreCase));
+            _catalogNote = null;
+        }
+        catch (Exception exception) when (exception is PlexBridgeException or PlexRequestException)
+        {
+            _catalogNote = exception.Message;
+        }
+    }
+
+    private async Task Scan()
+    {
+        _notice = null;
+        _error = null;
+        var library = _libraries.FirstOrDefault(item => item.Key == _sectionKey);
+        _job = await LyricsPage.StartScanAsync(_serverId, _sectionKey, Blank(_artistKey), Blank(_albumKey), library?.Title ?? "Music");
+        _tracks = _job.Tracks.ToList();
+        _busy = _job.State == LyricsJobState.Running;
+        _page = 1;
+        StartPolling();
+    }
+
+    private async Task Cancel()
+    {
+        if (_job is null)
+            return;
+        await LyricsPage.CancelAsync(_job.Id);
+    }
+
+    private async Task Toggle(LyricsTrackRow track, bool selected)
+    {
+        track.Selected = selected;
+        if (_job is not null)
+            await LyricsPage.SelectAsync(_job.Id, [track.RatingKey], selected);
+    }
+
+    private async Task SelectVisible(bool selected)
+    {
+        if (_job is null)
+            return;
+        var keys = Filtered().Where(row => row.CanSelect).Select(row => row.RatingKey).ToList();
+        await LyricsPage.SelectAsync(_job.Id, keys, selected);
+        foreach (var row in _tracks.Where(row => keys.Contains(row.RatingKey)))
+            row.Selected = selected;
+    }
+
+    private async Task WriteSelected()
+    {
+        if (_job is null || SelectedCount() == 0)
+            return;
+        var confirmed = await Dialogs.ShowMessageBoxAsync(
+            "Write lyrics",
+            "This writes " + SelectedCount() + " lyrics files next to the audio, then refreshes those albums in Plex. Existing lyrics files are left as they are.",
+            yesText: "Write files",
+            cancelText: "Cancel");
+        if (confirmed != true)
+            return;
+        _job = await LyricsPage.StartApplyAsync(_job.Id) ?? _job;
+        _tracks = _job.Tracks.ToList();
+        _busy = _job.State == LyricsJobState.Running;
+        StartPolling();
+    }
+
+    private async Task RefreshAlbum(string albumKey)
+    {
+        if (_job is null)
+            return;
+        _busy = true;
+        _notice = null;
+        try
+        {
+            _noticeError = false;
+            _notice = await LyricsPage.RefreshAlbumAsync(_job.Id, albumKey);
+        }
+        catch (Exception exception) when (exception is PlexBridgeException or PlexRequestException)
+        {
+            _noticeError = true;
+            _notice = exception.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void StartPolling()
+    {
+        StopPolling();
+        _poll = new CancellationTokenSource();
+        _timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        _ = PollAsync(_poll.Token);
+    }
+
+    private async Task PollAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (await _timer!.WaitForNextTickAsync(cancellationToken))
+            {
+                await InvokeAsync(async () =>
+                {
+                    var latest = await LyricsPage.LatestAsync();
+                    if (latest is null)
+                        return;
+                    _job = latest;
+                    _tracks = latest.Tracks.ToList();
+                    _busy = latest.State == LyricsJobState.Running;
+                    if (_page > _pageCount)
+                        _page = _pageCount;
+                    StateHasChanged();
+                });
+                if (_job?.State != LyricsJobState.Running)
+                    break;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private void StopPolling()
+    {
+        _poll?.Cancel();
+        _poll?.Dispose();
+        _poll = null;
+        _timer?.Dispose();
+        _timer = null;
+    }
+
+    private IEnumerable<LyricsTrackRow> Filtered()
+    {
+        return _filter switch
+        {
+            "ready" => _tracks.Where(row => row.CanSelect),
+            "have" => _tracks.Where(row => row.Status == LyricsStatus.AlreadyHas),
+            "problem" => _tracks.Where(row => row.Status is LyricsStatus.NotReachable or LyricsStatus.NotWritable or LyricsStatus.NotFound or LyricsStatus.LookupFailed or LyricsStatus.Instrumental),
+            _ => _tracks
+        };
+    }
+
+    private IEnumerable<IGrouping<string, LyricsTrackRow>> PageGroups()
+    {
+        var groups = Filtered()
+            .GroupBy(row => row.AlbumKey + "\n" + row.Artist + "\n" + row.Album)
+            .ToList();
+        var skip = (_page - 1) * 15;
+        return groups.Skip(skip).Take(15);
+    }
+
+    private int _pageCount => Math.Max(1, (int)Math.Ceiling(Filtered().GroupBy(row => row.AlbumKey + "\n" + row.Artist + "\n" + row.Album).Count() / 15d));
+
+    private void SetFilter(string filter)
+    {
+        _filter = filter;
+        _page = 1;
+    }
+
+    private Variant FilterVariant(string filter)
+        => _filter == filter ? Variant.Filled : Variant.Outlined;
+
+    private int SelectedCount()
+        => _tracks.Count(row => row.Selected && row.CanSelect);
+
+    private string Summary()
+    {
+        int Count(string status) => _tracks.Count(row => row.Status == status);
+        return Count(LyricsStatus.Synced) + " synced, "
+            + Count(LyricsStatus.Plain) + " plain, "
+            + Count(LyricsStatus.NotFound) + " not found, "
+            + Count(LyricsStatus.AlreadyHas) + " already have lyrics, "
+            + Count(LyricsStatus.NotReachable) + " path not reachable";
+    }
+
+    private static string AlbumLabel(PlexCatalogItem album)
+        => string.IsNullOrWhiteSpace(album.Artist) ? album.Title : album.Artist + " — " + album.Title;
+
+    private static string? Blank(string value)
+        => string.IsNullOrWhiteSpace(value) ? null : value;
+
+    private static double Percent(int done, int total)
+        => total <= 0 ? 0 : Math.Clamp(done * 100d / total, 0, 100);
+
+    public void Dispose()
+    {
+        StopPolling();
+    }
+
+    private sealed class LyricsServerEditor
+    {
+        public int ServerId { get; set; }
+        public int Slot { get; set; }
+        public string Name { get; set; } = "";
+        public string BaseUrl { get; set; } = "";
+        public bool HasToken { get; set; }
+        public bool AutoCheck { get; set; }
+        public int IntervalHours { get; set; } = 12;
+        public DateTimeOffset? LastAutoCheckUtc { get; set; }
+        public List<string> LibraryLocations { get; set; } = [];
+        public List<LyricsMapInput> Maps { get; set; } = [];
+    }
+}

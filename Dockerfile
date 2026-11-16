@@ -24,7 +24,7 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0
 ARG VERSION=0.0.0-dev
 
 LABEL org.opencontainers.image.title="PlexBridge" \
-      org.opencontainers.image.description="One-way migration companion for two Plex Media Servers" \
+      org.opencontainers.image.description="One-way migration companion for two Plex Media Servers, with local lyrics download" \
       org.opencontainers.image.version=$VERSION \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.source="https://github.com/007darkmatter5/plexbridge"
