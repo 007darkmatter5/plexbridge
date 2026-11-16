@@ -507,7 +507,8 @@ public class LyricsWorkflowTests
         Assert.True(File.Exists(Path.Combine(root, "song.txt")));
         Assert.Contains(handler.Requests, request => request.Method == HttpMethod.Put && request.Uri.AbsolutePath == "/library/metadata/55/refresh");
         Assert.Contains(handler.Requests, request => request.Method == HttpMethod.Put && request.Uri.AbsolutePath == "/library/metadata/123/refresh");
-        Assert.Contains("not on the track yet", rows[0].ApplyResult);
+        Assert.Contains("Waiting for sync", rows[0].ApplyResult);
+        Assert.Equal(LyricsStatus.WaitingForSync, rows[0].Status);
         Directory.Delete(root, true);
     }
 
@@ -621,7 +622,9 @@ public class LyricsSettingsTests
             fixture.Get<PlexReadClient>(),
             new PlexLyricsClient(new HandlerTransport(fixture.Handler), new ForwardingPlexWriteTransport(new HandlerTransport(fixture.Handler)), new AllowAllAddressGuard(), NullLogger<PlexLyricsClient>.Instance),
             new StubAdmin("admin"),
-            new LyricsJobs(fixture.Provider.GetRequiredService<IServiceScopeFactory>(), NullLogger<LyricsJobs>.Instance));
+            new LyricsJobs(fixture.Provider.GetRequiredService<IServiceScopeFactory>(), NullLogger<LyricsJobs>.Instance),
+            fixture.SyncQueue(),
+            fixture.SyncRefresh());
 
         var before = await page.LoadAsync();
         var form = Assert.Single(before);

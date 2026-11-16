@@ -319,6 +319,16 @@ namespace PlexBridge.Data.Migrations
                     b.Property<int>("PlexServerConnectionId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("SyncIntervalMinutes")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(2);
+
+                    b.Property<int>("SyncWindowMinutes")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(30);
+
                     b.Property<bool>("UseManualMaps")
                         .HasColumnType("INTEGER");
 
@@ -328,6 +338,72 @@ namespace PlexBridge.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("LyricsSettings", (string)null);
+                });
+
+            modelBuilder.Entity("PlexBridge.Data.LyricsSyncItem", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Album")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AlbumKey")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Artist")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset>("DeadlineUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(240)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("NextRefreshUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("PlexServerConnectionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("RatingKey")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("WrittenUtc")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PlexServerConnectionId", "RatingKey")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "NextRefreshUtc");
+
+                    b.ToTable("LyricsSyncItems", (string)null);
                 });
 
             modelBuilder.Entity("PlexBridge.Data.MigrationAudit", b =>
@@ -790,6 +866,17 @@ namespace PlexBridge.Data.Migrations
                 });
 
             modelBuilder.Entity("PlexBridge.Data.LyricsSetting", b =>
+                {
+                    b.HasOne("PlexBridge.Data.PlexServerConnection", "Server")
+                        .WithMany()
+                        .HasForeignKey("PlexServerConnectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Server");
+                });
+
+            modelBuilder.Entity("PlexBridge.Data.LyricsSyncItem", b =>
                 {
                     b.HasOne("PlexBridge.Data.PlexServerConnection", "Server")
                         .WithMany()

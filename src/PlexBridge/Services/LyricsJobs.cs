@@ -127,7 +127,7 @@ public sealed class LyricsJobs(IServiceScopeFactory scopes, ILogger<LyricsJobs> 
                 ?? throw new PlexBridgeException("That server was not found.");
             var setting = await db.LyricsSettings.AsNoTracking().FirstOrDefaultAsync(item => item.PlexServerConnectionId == server.Id, job.Cancel.Token);
             var mount = await db.LibraryMounts.AsNoTracking().FirstOrDefaultAsync(item => item.PlexServerConnectionId == server.Id, job.Cancel.Token);
-            var maps = PlexBridge.Libraries.LibraryMountStore.ReadMaps(mount, setting);
+            var maps = PlexBridge.Libraries.LibraryMountStore.ReadActiveMaps(mount, setting);
             job.ServerName = server.Name;
             var (uri, token) = Open(scope.ServiceProvider, server);
             var progress = new Progress<LyricsProgress>(update => job.Report(update.Status, update.Done, update.Total));
@@ -162,6 +162,8 @@ public sealed class LyricsJobs(IServiceScopeFactory scopes, ILogger<LyricsJobs> 
             var selected = job.Tracks.Where(row => row.Selected && row.CanSelect).ToList();
             var progress = new Progress<LyricsProgress>(update => job.Report(update.Status, update.Done, update.Total));
             await workflow.PublishAsync(uri, token, selected, progress, job.Cancel.Token);
+            var queue = scope.ServiceProvider.GetRequiredService<LyricsSyncQueue>();
+            await queue.RecordAsync(job.ServerId, selected, job.Cancel.Token);
             var wrote = selected.Count(row => row.ApplyResult?.StartsWith("Wrote ", StringComparison.Ordinal) == true);
             job.Complete(job.Tracks, "Wrote " + wrote + " lyrics files.");
         }

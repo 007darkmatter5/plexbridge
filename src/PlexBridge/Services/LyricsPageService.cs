@@ -22,6 +22,8 @@ public sealed class LyricsSettingsInput
     public string? SectionTitle { get; set; }
     public string? ContainerFolder { get; set; }
     public bool UseManualMaps { get; set; }
+    public int SyncIntervalMinutes { get; set; } = 2;
+    public int SyncWindowMinutes { get; set; } = 30;
     public List<LyricsMapInput> Maps { get; set; } = [];
     public List<LyricsLocationMatch> Matches { get; set; } = [];
 }
@@ -47,7 +49,24 @@ public sealed record LyricsServerForm(
     string? SectionTitle,
     string? ContainerFolder,
     bool UseManualMaps,
+    int SyncIntervalMinutes,
+    int SyncWindowMinutes,
     IReadOnlyList<LyricsLocationMatch> Matches);
+
+public sealed record LyricsSyncRow(
+    int Id,
+    int ServerId,
+    int Slot,
+    string ServerName,
+    string RatingKey,
+    string AlbumKey,
+    string Artist,
+    string Album,
+    string Title,
+    string FileName,
+    string Status,
+    DateTimeOffset NextRefreshUtc,
+    DateTimeOffset DeadlineUtc);
 
 public sealed class LyricsPageService(
     IDbContextFactory<ApplicationDbContext> databases,
@@ -55,7 +74,9 @@ public sealed class LyricsPageService(
     PlexReadClient libraries,
     PlexLyricsClient music,
     IAdminGate admin,
-    LyricsJobs jobs)
+    LyricsJobs jobs,
+    LyricsSyncQueue sync,
+    LyricsSyncRefreshService refreshes)
 {
     public async Task<LyricsJobSnapshot> StartScanAsync(int serverId, string sectionKey, string? artistKey, string? albumKey, string libraryName, CancellationToken cancellationToken = default)
     {
@@ -93,6 +114,18 @@ public sealed class LyricsPageService(
         return await jobs.RefreshAlbumAsync(userId, jobId, albumKey, cancellationToken);
     }
 
+    public async Task<IReadOnlyList<LyricsSyncRow>> SyncItemsAsync(CancellationToken cancellationToken = default)
+    {
+        await admin.RequireUserIdAsync(cancellationToken);
+        return await sync.ListOpenAsync(cancellationToken);
+    }
+
+    public async Task<string> RefreshSyncAsync(int itemId, CancellationToken cancellationToken = default)
+    {
+        await admin.RequireUserIdAsync(cancellationToken);
+        return await refreshes.RefreshNowAsync(itemId, cancellationToken);
+    }
+
     public async Task<IReadOnlyList<LyricsServerForm>> LoadAsync(CancellationToken cancellationToken = default)
     {
         await using var db = await databases.CreateDbContextAsync(cancellationToken);
@@ -109,6 +142,7 @@ public sealed class LyricsPageService(
     {
         if (input.IntervalHours is < 1 or > 168)
             throw new PlexBridgeException("Check newly added tracks every 1 to 168 hours.");
+        ApplySyncWindow(input);
         var maps = input.Maps.Select(map => new LyricsPathMap(map.PlexPrefix, map.ContainerPrefix)).ToList();
         if (!LyricsPaths.TryNormalize(maps, out var normalized, out var error))
             throw new PlexBridgeException(error);
@@ -126,10 +160,13 @@ public sealed class LyricsPageService(
         row.MusicSectionTitle = CleanTitle(input.SectionTitle);
         row.ContainerFolder = container;
         row.UseManualMaps = input.UseManualMaps;
-        row.LocationMatchesJson = input.UseManualMaps || input.Matches.Count == 0
+        var relevant = input.Matches.Where(match => normalized.Any(map => LyricsPaths.SamePrefix(map.PlexPrefix, match.PlexLocation))).ToList();
+        row.LocationMatchesJson = relevant.Count == 0
             ? null
-            : LyricsLibraryMapper.MatchesToJson(input.Matches);
+            : LyricsLibraryMapper.MatchesToJson(relevant);
         ApplySchedule(row, input.AutoCheck, input.IntervalHours, turningOn);
+        row.SyncIntervalMinutes = input.SyncIntervalMinutes;
+        row.SyncWindowMinutes = input.SyncWindowMinutes;
         var replaceSections = input.UseManualMaps || (!string.IsNullOrEmpty(section) && input.Matches.Count > 0);
         var sections = input.UseManualMaps || string.IsNullOrEmpty(section) || input.Matches.Count == 0
             ? null
@@ -151,25 +188,7 @@ public sealed class LyricsPageService(
         if (library.Locations.Count == 0)
             throw new PlexBridgeException("Plex did not report a folder for that library.");
 
-        var samples = new List<string>();
-        var start = 0;
-        for (var page = 0; page < LyricsLibraryMapper.MaxPages; page++)
-        {
-            var batch = await music.ReadTrackPageAsync(uri, token, section, start, cancellationToken);
-            foreach (var item in batch.Items)
-            {
-                if (item.Type.Equals("track", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(item.FilePath))
-                    samples.Add(item.FilePath);
-            }
-
-            if (batch.Items.Count < music.TrackPageSize)
-                break;
-            start += batch.Items.Count;
-            if (batch.Total is int total && start >= total)
-                break;
-            if (LibraryPathMapper.HasEnoughSamples(library.Locations, samples))
-                break;
-        }
+        var samples = await SampleTracksAsync(uri, token, section, library.Locations, cancellationToken);
 
         if (!LibraryPathMapper.TryMatch(library.Locations, container, samples, Directory.Exists, File.Exists, out var matches, out var maps, out var error, LibraryPathMapper.ListEntries))
             throw new PlexBridgeException(error);
@@ -182,10 +201,31 @@ public sealed class LyricsPageService(
             maps.Select(map => new LyricsPathMap(map.PlexPrefix, map.ContainerPrefix)).ToList());
     }
 
+    public async Task<LyricsLibraryReport> CheckManualAsync(int serverId, string? sectionKey, IReadOnlyList<LyricsMapInput> maps, CancellationToken cancellationToken = default)
+    {
+        var section = CleanSection(sectionKey) ?? throw new PlexBridgeException("Choose a music library.");
+        var prefixes = maps.Select(map => new LyricsPathMap(map.PlexPrefix, map.ContainerPrefix)).ToList();
+        if (!LyricsPaths.TryNormalize(prefixes, out var normalized, out var error))
+            throw new PlexBridgeException(error);
+        if (normalized.Count == 0)
+            throw new PlexBridgeException("Add a Plex prefix and a container prefix, or turn off manual prefixes.");
+
+        var (uri, token) = await OpenAsync(serverId, cancellationToken);
+        var sections = await libraries.GetSectionsAsync(uri, token, cancellationToken);
+        var library = sections.FirstOrDefault(item => item.Key == section && item.Type.Equals("artist", StringComparison.OrdinalIgnoreCase))
+            ?? throw new PlexBridgeException("That music library was not found.");
+        var samples = await SampleTracksAsync(uri, token, section, library.Locations, cancellationToken);
+        if (!ManualPrefixCheck.TryCheck(normalized, samples, Directory.Exists, File.Exists, DirectoryWrite.CanWrite, out var matches, out error))
+            throw new PlexBridgeException(error);
+
+        return new LyricsLibraryReport(library.Key, library.Title, "", matches, normalized);
+    }
+
     public async Task<LyricsLibraryReport> SaveLibraryAsync(LyricsSettingsInput input, CancellationToken cancellationToken = default)
     {
         if (input.IntervalHours is < 1 or > 168)
             throw new PlexBridgeException("Check newly added tracks every 1 to 168 hours.");
+        ApplySyncWindow(input);
         var report = await MapLibraryAsync(input.ServerId, input.SectionKey, input.ContainerFolder, cancellationToken);
 
         await using var db = await databases.CreateDbContextAsync(cancellationToken);
@@ -216,6 +256,8 @@ public sealed class LyricsPageService(
         row.UseManualMaps = false;
         row.LocationMatchesJson = LyricsLibraryMapper.MatchesToJson(report.Matches);
         ApplySchedule(row, input.AutoCheck, input.IntervalHours, turningOn);
+        row.SyncIntervalMinutes = input.SyncIntervalMinutes;
+        row.SyncWindowMinutes = input.SyncWindowMinutes;
         await LibraryMountStore.UpsertAsync(
             db,
             input.ServerId,
@@ -287,6 +329,41 @@ public sealed class LyricsPageService(
             row.LastAutoCheckUtc = DateTimeOffset.UtcNow;
     }
 
+    private static void ApplySyncWindow(LyricsSettingsInput input)
+    {
+        if (input.SyncIntervalMinutes is < 1 or > 60)
+            throw new PlexBridgeException("Refresh Plex every 1 to 60 minutes.");
+        if (input.SyncWindowMinutes is < 2 or > 240)
+            throw new PlexBridgeException("Keep trying for 2 to 240 minutes.");
+        if (input.SyncWindowMinutes <= input.SyncIntervalMinutes)
+            throw new PlexBridgeException("Keep trying for longer than the time between refreshes.");
+    }
+
+    private async Task<List<string>> SampleTracksAsync(Uri uri, string token, string section, IReadOnlyList<string> locations, CancellationToken cancellationToken)
+    {
+        var samples = new List<string>();
+        var start = 0;
+        for (var page = 0; page < LyricsLibraryMapper.MaxPages; page++)
+        {
+            var batch = await music.ReadTrackPageAsync(uri, token, section, start, cancellationToken);
+            foreach (var item in batch.Items)
+            {
+                if (item.Type.Equals("track", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(item.FilePath))
+                    samples.Add(item.FilePath);
+            }
+
+            if (batch.Items.Count < music.TrackPageSize)
+                break;
+            start += batch.Items.Count;
+            if (batch.Total is int total && start >= total)
+                break;
+            if (LibraryPathMapper.HasEnoughSamples(locations, samples))
+                break;
+        }
+
+        return samples;
+    }
+
     private static string? CleanSection(string? sectionKey)
     {
         if (string.IsNullOrWhiteSpace(sectionKey))
@@ -338,6 +415,8 @@ public sealed class LyricsPageService(
             setting?.MusicSectionTitle,
             LibraryMountStore.ReadContainer(mount, setting),
             LibraryMountStore.ReadManual(mount, setting),
+            setting?.SyncIntervalMinutes is >= 1 and <= 60 ? setting.SyncIntervalMinutes : 2,
+            setting?.SyncWindowMinutes is >= 2 and <= 240 ? setting.SyncWindowMinutes : 30,
             LyricsLibraryMapper.MatchesFromJson(setting?.LocationMatchesJson));
     }
 }

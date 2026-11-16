@@ -72,41 +72,30 @@
                 }
                 @if (editor.UseManualMaps)
                 {
-                    <MudText Typo="Typo.caption">Manual path prefixes are what lyrics write with until you turn them off.</MudText>
+                    <MudText Typo="Typo.caption">Manual prefixes are in use.</MudText>
                     @foreach (var map in FilledMaps(editor))
                     {
-                        <MudText Typo="Typo.body2" Class="pb-path">@map.PlexPrefix → @map.ContainerPrefix</MudText>
+                        <MudText Typo="Typo.body2" Class="pb-path">@ManualLine(map, ManualMatch(editor, map))</MudText>
                     }
                 }
-                @if (!editor.UseManualMaps && editor.Matches.Count > 0)
+                else if (editor.Matches.Count > 0)
                 {
+                    <MudText Typo="Typo.caption">Library mapping is in use.</MudText>
                     @foreach (var match in editor.Matches)
                     {
                         <MudText Typo="Typo.body2" Class="pb-path">@MatchLine(match)</MudText>
                     }
                     @if (editor.Matches.All(match => match.Status != LyricsMapStatus.Ok) && FilledMaps(editor).Count > 0)
                     {
-                        <MudText Typo="Typo.caption">Saved path prefixes are still in use.</MudText>
-                        @foreach (var map in FilledMaps(editor))
-                        {
-                            <MudText Typo="Typo.body2" Class="pb-path">@map.PlexPrefix → @map.ContainerPrefix</MudText>
-                        }
+                        <MudText Typo="Typo.caption">A folder marked Not found is not used. Turn on manual prefixes to use a saved prefix instead.</MudText>
                     }
                 }
-                else if (!editor.UseManualMaps && FilledMaps(editor).Count > 0)
+                else if (FilledMaps(editor).Count > 0)
                 {
                     <MudText Typo="Typo.caption">Saved path prefixes</MudText>
                     @foreach (var map in FilledMaps(editor))
                     {
                         <MudText Typo="Typo.body2" Class="pb-path">@map.PlexPrefix → @map.ContainerPrefix</MudText>
-                    }
-                }
-                @if (editor.UseManualMaps && editor.Matches.Count > 0)
-                {
-                    <MudText Typo="Typo.caption">Checked paths. Manual prefixes stay in use until you turn them off.</MudText>
-                    @foreach (var match in editor.Matches)
-                    {
-                        <MudText Typo="Typo.body2" Class="pb-path">@MatchLine(match)</MudText>
                     }
                 }
                 <MudTooltip Text="@CheckReason(editor)">
@@ -118,8 +107,8 @@
                 <MudExpansionPanels>
                     <MudExpansionPanel Text="Advanced" Expanded="false">
                         <MudStack Spacing="2">
-                            <MudText Typo="Typo.body2">Manual path prefixes. Turn this on only when the library mapping is not the right one. These replace it.</MudText>
-                            <MudSwitch T="bool" @bind-Value="editor.UseManualMaps" Label="Use manual prefixes" Color="Color.Primary" Disabled="_saving" />
+                            <MudText Typo="Typo.body2">Manual prefixes. Turn this on when this container has a synced copy and cannot see the folder Plex uses. Writes use these prefixes while the switch is on.</MudText>
+                            <MudSwitch T="bool" Value="editor.UseManualMaps" ValueChanged="@(value => OnManual(editor, value))" Label="Use manual prefixes" Color="Color.Primary" Disabled="_saving" />
                             @foreach (var map in editor.Maps)
                             {
                                 <MudGrid Spacing="2" @key="map">
@@ -144,11 +133,40 @@
                     It does not go back through the library, and it does not replace lyrics that are already there.
                 </MudText>
                 <MudNumericField T="int" @bind-Value="editor.IntervalHours" Label="Hours between checks" Variant="Variant.Outlined" Min="1" Max="168" Disabled="_saving || !editor.AutoCheck" Style="max-width: 16rem" />
+                <MudNumericField T="int" @bind-Value="editor.SyncIntervalMinutes" Label="Minutes between Plex refreshes" Variant="Variant.Outlined" Min="1" Max="60" Disabled="_saving" Style="max-width: 16rem" />
+                <MudNumericField T="int" @bind-Value="editor.SyncWindowMinutes" Label="Minutes to keep trying" Variant="Variant.Outlined" Min="2" Max="240" Disabled="_saving" Style="max-width: 16rem" />
+                <MudText Typo="Typo.caption">
+                    After a lyrics file is written, Plex is refreshed on that interval until it reports a lyrics stream, or the time runs out.
+                    This waits for a copy to sync to the server Plex can see.
+                </MudText>
                 @if (editor.LastAutoCheckUtc is DateTimeOffset last)
                 {
                     <MudText Typo="Typo.caption">Last check @last.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudText>
                 }
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_saving" OnClick="() => Save(editor)">Save</MudButton>
+            </MudStack>
+        </MudPaper>
+    }
+
+    @if (_syncItems.Count > 0)
+    {
+        <MudPaper Class="pa-4" Outlined="true">
+            <MudStack Spacing="1">
+                <MudText Typo="Typo.h6">Waiting for Plex</MudText>
+                <MudText Typo="Typo.body2">Lyrics files that are written, and Plex has not reported a lyrics stream yet.</MudText>
+                @foreach (var item in _syncItems)
+                {
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Wrap="Wrap.Wrap" @key="item.Id">
+                        <div>
+                            <MudText Typo="Typo.body2">@SyncTitle(item)</MudText>
+                            <MudText Typo="Typo.caption">@item.Status</MudText>
+                        </div>
+                        @if (item.Status == LyricsSyncStatus.Missed)
+                        {
+                            <MudButton Variant="Variant.Outlined" Disabled="_busy" OnClick="() => RefreshSync(item)">Refresh in Plex</MudButton>
+                        }
+                    </MudStack>
+                }
             </MudStack>
         </MudPaper>
     }
@@ -298,6 +316,10 @@
                                             {
                                                 <div class="pb-path">@track.PlexPath</div>
                                             }
+                                            @if (track.Status == LyricsSyncStatus.Missed)
+                                            {
+                                                <MudButton Variant="Variant.Text" Disabled="_busy" OnClick="() => RefreshSyncTrack(track)">Refresh in Plex</MudButton>
+                                            }
                                         </td>
                                     </tr>
                                 }
@@ -316,6 +338,8 @@
     private readonly List<PlexCatalogItem> _artists = [];
     private readonly List<PlexCatalogItem> _albums = [];
     private List<LyricsTrackRow> _tracks = [];
+    private List<LyricsSyncRow> _syncItems = [];
+    private readonly HashSet<string> _seenSync = new(StringComparer.Ordinal);
     private bool _loading = true;
     private bool _saving;
     private bool _busy;
@@ -332,6 +356,8 @@
     private LyricsJobSnapshot? _job;
     private PeriodicTimer? _timer;
     private CancellationTokenSource? _poll;
+    private PeriodicTimer? _syncTimer;
+    private CancellationTokenSource? _syncPoll;
 
     protected override async Task OnInitializedAsync()
     {
@@ -360,6 +386,8 @@
                 SectionTitle = form.SectionTitle ?? "",
                 ContainerFolder = LibraryPathMapper.ResolveContainer(form.ContainerFolder),
                 UseManualMaps = form.UseManualMaps,
+                SyncIntervalMinutes = form.SyncIntervalMinutes,
+                SyncWindowMinutes = form.SyncWindowMinutes,
                 Maps = form.Maps.Select(map => new LyricsMapInput { PlexPrefix = map.PlexPrefix, ContainerPrefix = map.ContainerPrefix }).ToList(),
                 Matches = form.Matches.ToList()
             }));
@@ -381,6 +409,7 @@
                 _serverId = _editors.FirstOrDefault(item => item.HasToken)?.ServerId ?? 0;
             if (_libraries.Count == 0 && _serverId != 0)
                 await OnServer(_serverId);
+            await LoadSync();
         }
         catch (Exception)
         {
@@ -442,7 +471,9 @@
         _error = null;
         try
         {
-            var report = await LyricsPage.MapLibraryAsync(editor.ServerId, editor.SectionKey, editor.ContainerFolder);
+            var report = editor.UseManualMaps
+                ? await LyricsPage.CheckManualAsync(editor.ServerId, editor.SectionKey, editor.Maps)
+                : await LyricsPage.MapLibraryAsync(editor.ServerId, editor.SectionKey, editor.ContainerFolder);
             editor.Matches = report.Matches.ToList();
             editor.SectionTitle = report.SectionTitle;
             _noticeError = false;
@@ -473,6 +504,14 @@
         editor.Matches.Clear();
     }
 
+    private static void OnManual(LyricsServerEditor editor, bool value)
+    {
+        if (editor.UseManualMaps == value)
+            return;
+        editor.UseManualMaps = value;
+        editor.Matches.Clear();
+    }
+
     private static void OnContainer(LyricsServerEditor editor, string value)
     {
         if (editor.ContainerFolder == value)
@@ -491,8 +530,12 @@
             SectionTitle = string.IsNullOrEmpty(editor.SectionKey) ? null : LibraryLabel(editor, editor.SectionKey),
             ContainerFolder = editor.ContainerFolder,
             UseManualMaps = editor.UseManualMaps,
+            SyncIntervalMinutes = editor.SyncIntervalMinutes,
+            SyncWindowMinutes = editor.SyncWindowMinutes,
             Maps = editor.Maps,
-            Matches = editor.UseManualMaps || string.IsNullOrEmpty(editor.SectionKey) ? [] : editor.Matches
+            Matches = editor.UseManualMaps
+                ? editor.Matches.Where(match => match.Status != LyricsMapStatus.NotFound).ToList()
+                : string.IsNullOrEmpty(editor.SectionKey) ? [] : editor.Matches
         };
 
     private static List<LyricsMapInput> FilledMaps(LyricsServerEditor editor)
@@ -516,7 +559,7 @@
         if (_saving)
             return "Wait until the current save finishes.";
         if (editor.UseManualMaps)
-            return "Check paths only reads the mount. It does not write lyrics. Manual prefixes stay in use until you turn them off.";
+            return "Check paths confirms the container folder exists, is writable, and that a few Plex tracks are there. It does not need to see the Plex folder itself, and it does not write lyrics.";
         return "Check paths only reads the mount and a few files. It does not write lyrics. The Read-only badge does not block it.";
     }
 
@@ -541,10 +584,23 @@
     }
 
     private static string MatchLine(LyricsLocationMatch match)
+        => PathMapText.Line(match.PlexLocation, match.ContainerPrefix, match.Status);
+
+    private static LyricsLocationMatch? ManualMatch(LyricsServerEditor editor, LyricsMapInput map)
+        => editor.Matches.FirstOrDefault(match =>
+            match.Status != LyricsMapStatus.NotFound
+            && SamePrefix(match.PlexLocation, map.PlexPrefix));
+
+    private static string ManualLine(LyricsMapInput map, LyricsLocationMatch? match)
+        => match is null
+            ? map.PlexPrefix + " → " + map.ContainerPrefix
+            : PathMapText.Line(match.PlexLocation, match.ContainerPrefix ?? map.ContainerPrefix, match.Status);
+
+    private static bool SamePrefix(string left, string right)
     {
-        if (match.Status == LyricsMapStatus.Ok && !string.IsNullOrWhiteSpace(match.ContainerPrefix))
-            return match.PlexLocation + " → " + match.ContainerPrefix + " · " + LyricsMapStatus.Ok;
-        return match.PlexLocation + " · " + LyricsMapStatus.NotFound;
+        var windows = left.Contains('\\') || right.Contains('\\') || left.Contains(':') || right.Contains(':');
+        var comparison = windows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        return string.Equals(left.Replace('\\', '/').TrimEnd('/'), right.Replace('\\', '/').TrimEnd('/'), comparison);
     }
 
     private async Task OnServer(int serverId)
@@ -664,7 +720,7 @@
             return;
         var confirmed = await Dialogs.ShowMessageBoxAsync(
             "Write lyrics",
-            "This writes " + SelectedCount() + " lyrics files next to the audio, then refreshes those albums in Plex. Existing lyrics files are left as they are.",
+            "This writes " + SelectedCount() + " lyrics files next to the audio, then refreshes those albums in Plex until a lyrics stream shows up. Existing lyrics files are left as they are.",
             yesText: "Write files",
             cancelText: "Cancel");
         if (confirmed != true)
@@ -721,6 +777,8 @@
                     _busy = latest.State == LyricsJobState.Running;
                     if (_page > _pageCount)
                         _page = _pageCount;
+                    if (latest.State != LyricsJobState.Running)
+                        await LoadSync();
                     StateHasChanged();
                 });
                 if (_job?.State != LyricsJobState.Running)
@@ -739,6 +797,130 @@
         _poll = null;
         _timer?.Dispose();
         _timer = null;
+    }
+
+    private async Task LoadSync()
+    {
+        try
+        {
+            _syncItems = (await LyricsPage.SyncItemsAsync()).ToList();
+            ApplySync();
+            EnsureSyncTimer();
+        }
+        catch (Exception)
+        {
+            // The list is optional. A failed read leaves the last list on screen.
+        }
+    }
+
+    private void ApplySync()
+    {
+        var open = _syncItems.Where(item => item.ServerId == _serverId).ToList();
+        foreach (var track in _tracks)
+        {
+            var match = open.FirstOrDefault(item => item.RatingKey == track.RatingKey);
+            var written = track.ApplyResult?.StartsWith("Wrote ", StringComparison.Ordinal) == true
+                || track.Status is LyricsSyncStatus.Waiting or LyricsSyncStatus.Missed or LyricsSyncStatus.Done;
+            if (!written)
+                continue;
+            if (match is not null)
+            {
+                _seenSync.Add(track.RatingKey);
+                track.Status = match.Status;
+                if (match.Status == LyricsSyncStatus.Missed)
+                    track.ApplyResult = "Not picked up by Plex yet.";
+                continue;
+            }
+
+            if (_seenSync.Contains(track.RatingKey) && track.Status is LyricsSyncStatus.Waiting or LyricsSyncStatus.Missed)
+            {
+                track.Status = LyricsSyncStatus.Done;
+                track.ApplyResult = "Plex shows a lyrics stream.";
+                _seenSync.Remove(track.RatingKey);
+            }
+        }
+    }
+
+    private void EnsureSyncTimer()
+    {
+        if (_syncTimer is not null)
+            return;
+        if (_syncItems.All(item => item.Status != LyricsSyncStatus.Waiting))
+            return;
+        _syncPoll = new CancellationTokenSource();
+        _syncTimer = new PeriodicTimer(TimeSpan.FromSeconds(15));
+        _ = PollSyncAsync(_syncPoll.Token);
+    }
+
+    private async Task PollSyncAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (await _syncTimer!.WaitForNextTickAsync(cancellationToken))
+            {
+                await InvokeAsync(async () =>
+                {
+                    await LoadSync();
+                    StateHasChanged();
+                });
+                if (_syncItems.All(item => item.Status != LyricsSyncStatus.Waiting))
+                    break;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            if (!cancellationToken.IsCancellationRequested)
+                StopSyncPolling();
+        }
+    }
+
+    private void StopSyncPolling()
+    {
+        _syncPoll?.Cancel();
+        _syncPoll?.Dispose();
+        _syncPoll = null;
+        _syncTimer?.Dispose();
+        _syncTimer = null;
+    }
+
+    private async Task RefreshSync(LyricsSyncRow item)
+    {
+        _busy = true;
+        _notice = null;
+        try
+        {
+            _noticeError = false;
+            _notice = await LyricsPage.RefreshSyncAsync(item.Id);
+            await LoadSync();
+        }
+        catch (Exception exception) when (exception is PlexBridgeException or PlexRequestException)
+        {
+            _noticeError = true;
+            _notice = exception.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private Task RefreshSyncTrack(LyricsTrackRow track)
+    {
+        var item = _syncItems.FirstOrDefault(candidate => candidate.ServerId == _serverId && candidate.RatingKey == track.RatingKey);
+        return item is null ? Task.CompletedTask : RefreshSync(item);
+    }
+
+    private string SyncTitle(LyricsSyncRow item)
+    {
+        var name = string.IsNullOrWhiteSpace(item.Artist) ? item.Title : item.Artist + " — " + item.Title;
+        if (!string.IsNullOrWhiteSpace(item.Album))
+            name += " — " + item.Album;
+        if (_editors.Count > 1)
+            name = "Server " + item.Slot + " · " + name;
+        return name;
     }
 
     private IEnumerable<LyricsTrackRow> Filtered()
@@ -782,7 +964,9 @@
             + Count(LyricsStatus.Plain) + " plain, "
             + Count(LyricsStatus.NotFound) + " not found, "
             + Count(LyricsStatus.AlreadyHas) + " already have lyrics, "
-            + Count(LyricsStatus.NotReachable) + " path not reachable";
+            + Count(LyricsStatus.NotReachable) + " path not reachable, "
+            + Count(LyricsSyncStatus.Waiting) + " waiting for sync, "
+            + Count(LyricsSyncStatus.Missed) + " not picked up";
     }
 
     private static string AlbumLabel(PlexCatalogItem album)
@@ -797,6 +981,7 @@
     public void Dispose()
     {
         StopPolling();
+        StopSyncPolling();
     }
 
     private sealed class LyricsServerEditor
@@ -813,6 +998,8 @@
         public string SectionTitle { get; set; } = "";
         public string ContainerFolder { get; set; } = "/libraries";
         public bool UseManualMaps { get; set; }
+        public int SyncIntervalMinutes { get; set; } = 2;
+        public int SyncWindowMinutes { get; set; } = 30;
         public string? LibraryNote { get; set; }
         public List<PlexSectionInfo> Libraries { get; set; } = [];
         public List<LyricsMapInput> Maps { get; set; } = [];

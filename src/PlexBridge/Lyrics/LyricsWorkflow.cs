@@ -334,7 +334,12 @@ public sealed class LyricsWorkflow(PlexLyricsClient plex, LrclibClient lrclib, L
             else if (row.PlexShowsLyrics == true)
                 row.ApplyResult = sentence + " Plex shows a lyrics stream.";
             else if (row.PlexShowsLyrics == false)
-                row.ApplyResult = sentence + " The album was refreshed. A lyrics stream is not on the track yet.";
+            {
+                row.Status = LyricsStatus.WaitingForSync;
+                row.ApplyResult = sentence + " Waiting for sync.";
+                row.CanSelect = false;
+                row.Selected = false;
+            }
             else
                 row.ApplyResult = sentence + " The track was not re-read after the refresh.";
         }

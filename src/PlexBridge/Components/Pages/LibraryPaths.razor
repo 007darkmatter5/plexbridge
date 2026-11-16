@@ -43,10 +43,10 @@
                 <MudTextField T="string" @bind-Value="editor.ContainerFolder" Label="Libraries folder" Variant="Variant.Outlined" Disabled="_saving" HelperText="Usually /libraries" Immediate="true" />
                 @if (editor.UseManualMaps)
                 {
-                    <MudText Typo="Typo.caption">Manual path prefixes are what writes use until you turn them off.</MudText>
+                    <MudText Typo="Typo.caption">Manual prefixes are in use.</MudText>
                     @foreach (var map in Filled(editor))
                     {
-                        <MudText Typo="Typo.body2" Class="pb-path">@map.PlexPrefix → @map.ContainerPrefix</MudText>
+                        <MudText Typo="Typo.body2" Class="pb-path">@ManualLine(map, ManualMatch(editor, map))</MudText>
                     }
                 }
                 else if (editor.Sections.Count == 0 && Filled(editor).Count > 0)
@@ -57,15 +57,18 @@
                         <MudText Typo="Typo.body2" Class="pb-path">@map.PlexPrefix → @map.ContainerPrefix</MudText>
                     }
                 }
-                @foreach (var section in editor.Sections)
+                @if (!editor.UseManualMaps)
                 {
-                    <div @key="section.SectionKey">
-                        <MudText Typo="Typo.body2">@section.Title · @section.Status</MudText>
-                        @foreach (var location in section.Locations)
-                        {
-                            <MudText Typo="Typo.body2" Class="pb-path">@LocationLine(location)</MudText>
-                        }
-                    </div>
+                    @foreach (var section in editor.Sections)
+                    {
+                        <div @key="section.SectionKey">
+                            <MudText Typo="Typo.body2">@section.Title · @section.Status</MudText>
+                            @foreach (var location in section.Locations)
+                            {
+                                <MudText Typo="Typo.body2" Class="pb-path">@LocationLine(location)</MudText>
+                            }
+                        </div>
+                    }
                 }
                 <MudTooltip Text="@CheckReason(editor)">
                     <span class="d-inline-block">
@@ -76,8 +79,8 @@
                 <MudExpansionPanels>
                     <MudExpansionPanel Text="Advanced" Expanded="false">
                         <MudStack Spacing="2">
-                            <MudText Typo="Typo.body2">Manual path prefixes. Turn this on only when the library mapping is not the right one. These replace it.</MudText>
-                            <MudSwitch T="bool" @bind-Value="editor.UseManualMaps" Label="Use manual prefixes" Color="Color.Primary" Disabled="_saving" />
+                            <MudText Typo="Typo.body2">Manual prefixes. Turn this on when this container has a synced copy and cannot see the folder Plex uses. Writes use these prefixes while the switch is on.</MudText>
+                            <MudSwitch T="bool" Value="editor.UseManualMaps" ValueChanged="@(value => OnManual(editor, value))" Label="Use manual prefixes" Color="Color.Primary" Disabled="_saving" />
                             @foreach (var map in editor.Maps)
                             {
                                 <MudGrid Spacing="2" @key="map">
@@ -151,8 +154,16 @@
         _error = null;
         try
         {
-            var report = await Paths.CheckAsync(editor.ServerId, editor.ContainerFolder);
-            editor.Sections = report.Sections.ToList();
+            if (editor.UseManualMaps)
+            {
+                editor.ManualResults = (await Paths.CheckManualAsync(editor.ServerId, editor.Maps)).ToList();
+            }
+            else
+            {
+                var report = await Paths.CheckAsync(editor.ServerId, editor.ContainerFolder);
+                editor.Sections = report.Sections.ToList();
+                editor.ManualResults.Clear();
+            }
             _noticeError = false;
             _notice = "Checked " + editor.Name + ".";
         }
@@ -223,19 +234,38 @@
         if (_saving)
             return "Wait until the current save finishes.";
         if (editor.UseManualMaps)
-            return "Check paths only reads the mount. It does not write files. Manual prefixes stay in use until you turn them off.";
+            return "Check paths confirms each container folder exists, is writable, and that a few Plex files are there. It does not need to see the Plex folder itself, and it does not write files.";
         return "Check paths only reads the mount and a few files. It does not write files. The Read-only badge does not block it.";
     }
 
     private static List<LyricsMapInput> Filled(LibraryPathEditor editor)
         => editor.Maps.Where(map => !string.IsNullOrWhiteSpace(map.PlexPrefix) || !string.IsNullOrWhiteSpace(map.ContainerPrefix)).ToList();
 
-    private static string LocationLine(LibraryLocationMatch match)
+    private static void OnManual(LibraryPathEditor editor, bool value)
     {
-        if (match.Status == LibraryMapStatus.Ok && !string.IsNullOrWhiteSpace(match.ContainerPrefix))
-            return match.PlexLocation + " → " + match.ContainerPrefix + " · " + LibraryMapStatus.Ok;
-        return match.PlexLocation + " · " + LibraryMapStatus.NotFound;
+        if (editor.UseManualMaps == value)
+            return;
+        editor.UseManualMaps = value;
+        editor.ManualResults.Clear();
     }
+
+    private static LibraryLocationMatch? ManualMatch(LibraryPathEditor editor, LyricsMapInput map)
+        => editor.ManualResults.FirstOrDefault(match => SamePrefix(match.PlexLocation, map.PlexPrefix));
+
+    private static string ManualLine(LyricsMapInput map, LibraryLocationMatch? match)
+        => match is null
+            ? map.PlexPrefix + " → " + map.ContainerPrefix
+            : PathMapText.Line(match.PlexLocation, match.ContainerPrefix ?? map.ContainerPrefix, match.Status);
+
+    private static bool SamePrefix(string left, string right)
+    {
+        var windows = left.Contains('\\') || right.Contains('\\') || left.Contains(':') || right.Contains(':');
+        var comparison = windows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        return string.Equals(left.Replace('\\', '/').TrimEnd('/'), right.Replace('\\', '/').TrimEnd('/'), comparison);
+    }
+
+    private static string LocationLine(LibraryLocationMatch match)
+        => PathMapText.Line(match.PlexLocation, match.ContainerPrefix, match.Status);
 
     private sealed class LibraryPathEditor
     {
@@ -248,5 +278,6 @@
         public bool UseManualMaps { get; set; }
         public List<LyricsMapInput> Maps { get; set; } = [];
         public List<LibrarySectionMatch> Sections { get; set; } = [];
+        public List<LibraryLocationMatch> ManualResults { get; set; } = [];
     }
 }

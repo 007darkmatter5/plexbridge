@@ -14,6 +14,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<WatchdogIncident> WatchdogIncidents => Set<WatchdogIncident>();
     public DbSet<LyricsSetting> LyricsSettings => Set<LyricsSetting>();
     public DbSet<LibraryMount> LibraryMounts => Set<LibraryMount>();
+    public DbSet<LyricsSyncItem> LyricsSyncItems => Set<LyricsSyncItem>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -96,6 +97,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.Property(x => x.MusicSectionKey).HasMaxLength(16);
             entity.Property(x => x.MusicSectionTitle).HasMaxLength(200);
             entity.Property(x => x.ContainerFolder).HasMaxLength(400);
+            entity.Property(x => x.SyncIntervalMinutes).HasDefaultValue(2);
+            entity.Property(x => x.SyncWindowMinutes).HasDefaultValue(30);
             entity.HasIndex(x => x.PlexServerConnectionId).IsUnique();
             entity.HasOne(x => x.Server)
                 .WithMany()
@@ -109,6 +112,24 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.Property(x => x.ContainerFolder).HasMaxLength(400);
             entity.Property(x => x.PathMapsJson).IsRequired();
             entity.HasIndex(x => x.PlexServerConnectionId).IsUnique();
+            entity.HasOne(x => x.Server)
+                .WithMany()
+                .HasForeignKey(x => x.PlexServerConnectionId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<LyricsSyncItem>(entity =>
+        {
+            entity.ToTable("LyricsSyncItems");
+            entity.Property(x => x.RatingKey).HasMaxLength(16).IsRequired();
+            entity.Property(x => x.AlbumKey).HasMaxLength(16).IsRequired();
+            entity.Property(x => x.Artist).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Album).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Title).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.FileName).HasMaxLength(240).IsRequired();
+            entity.Property(x => x.Status).HasMaxLength(40).IsRequired();
+            entity.HasIndex(x => new { x.PlexServerConnectionId, x.RatingKey }).IsUnique();
+            entity.HasIndex(x => new { x.Status, x.NextRefreshUtc });
             entity.HasOne(x => x.Server)
                 .WithMany()
                 .HasForeignKey(x => x.PlexServerConnectionId)

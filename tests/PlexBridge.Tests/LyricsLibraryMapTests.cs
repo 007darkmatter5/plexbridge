@@ -502,7 +502,9 @@ public class LyricsLibrarySaveTests
             fixture.Get<PlexReadClient>(),
             lyrics ?? Client(fixture),
             new StubAdmin("admin"),
-            new LyricsJobs(fixture.Provider.GetRequiredService<IServiceScopeFactory>(), NullLogger<LyricsJobs>.Instance));
+            new LyricsJobs(fixture.Provider.GetRequiredService<IServiceScopeFactory>(), NullLogger<LyricsJobs>.Instance),
+            fixture.SyncQueue(),
+            fixture.SyncRefresh(lyrics));
 
     private static PlexLyricsClient Client(ServiceFixture fixture)
     {

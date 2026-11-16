@@ -101,6 +101,31 @@ public sealed class LibraryPathService(
             normalized.Select(map => new LibraryPathMap(map.PlexPrefix, map.ContainerPrefix)).ToList());
     }
 
+    public async Task<IReadOnlyList<LibraryLocationMatch>> CheckManualAsync(int serverId, IReadOnlyList<LyricsMapInput> maps, CancellationToken cancellationToken = default)
+    {
+        await admin.RequireUserIdAsync(cancellationToken);
+        var prefixes = maps.Select(map => new LyricsPathMap(map.PlexPrefix, map.ContainerPrefix)).ToList();
+        if (!LyricsPaths.TryNormalize(prefixes, out var normalized, out var error))
+            throw new PlexBridgeException(error);
+        if (normalized.Count == 0)
+            throw new PlexBridgeException("Add a Plex prefix and a container prefix, or turn off manual prefixes.");
+
+        var (uri, token) = await OpenAsync(serverId, cancellationToken);
+        var sections = await libraries.GetSectionsAsync(uri, token, cancellationToken);
+        var samples = new List<string>();
+        foreach (var section in sections)
+        {
+            var leaf = LibraryFileClient.LeafType(section.Type);
+            if (leaf is null || section.Locations.Count == 0)
+                continue;
+            samples.AddRange(await SampleAsync(uri, token, section.Key, leaf, section.Locations, cancellationToken));
+        }
+
+        if (!ManualPrefixCheck.TryCheck(normalized, samples, Directory.Exists, File.Exists, DirectoryWrite.CanWrite, out var matches, out error))
+            throw new PlexBridgeException(error);
+        return matches.Select(match => new LibraryLocationMatch(match.PlexLocation, match.ContainerPrefix, match.Status, match.SamplesChecked, match.SamplesFound)).ToList();
+    }
+
     public async Task<LibraryCheckReport> SaveAsync(LibrarySettingsInput input, CancellationToken cancellationToken = default)
     {
         await admin.RequireUserIdAsync(cancellationToken);
@@ -168,7 +193,10 @@ public sealed class LibraryPathService(
         lyrics.PathMapsJson = json;
         lyrics.ContainerFolder = container;
         lyrics.UseManualMaps = true;
-        lyrics.LocationMatchesJson = null;
+        var kept = LyricsLibraryMapper.MatchesFromJson(lyrics.LocationMatchesJson)
+            .Where(match => match.Status != LyricsMapStatus.NotFound && !string.IsNullOrWhiteSpace(match.ContainerPrefix))
+            .ToList();
+        lyrics.LocationMatchesJson = kept.Count == 0 ? null : LyricsLibraryMapper.MatchesToJson(kept);
         await LibraryMountStore.UpsertAsync(db, input.ServerId, container, true, json, null, true, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         return new LibraryCheckReport(
