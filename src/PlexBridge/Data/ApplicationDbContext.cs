@@ -92,6 +92,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         {
             entity.ToTable("LyricsSettings");
             entity.Property(x => x.PathMapsJson).IsRequired();
+            entity.Property(x => x.MusicSectionKey).HasMaxLength(16);
+            entity.Property(x => x.ContainerFolder).HasMaxLength(400);
             entity.HasIndex(x => x.PlexServerConnectionId).IsUnique();
             entity.HasOne(x => x.Server)
                 .WithMany()

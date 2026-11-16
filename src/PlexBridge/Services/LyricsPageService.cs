@@ -17,8 +17,19 @@ public sealed class LyricsSettingsInput
     public int ServerId { get; set; }
     public bool AutoCheck { get; set; }
     public int IntervalHours { get; set; } = 12;
+    public string? SectionKey { get; set; }
+    public string? ContainerFolder { get; set; }
+    public bool UseManualMaps { get; set; }
     public List<LyricsMapInput> Maps { get; set; } = [];
+    public List<LyricsLocationMatch> Matches { get; set; } = [];
 }
+
+public sealed record LyricsLibraryReport(
+    string SectionKey,
+    string SectionTitle,
+    string ContainerFolder,
+    IReadOnlyList<LyricsLocationMatch> Matches,
+    IReadOnlyList<LyricsPathMap> Maps);
 
 public sealed record LyricsServerForm(
     int ServerId,
@@ -30,7 +41,10 @@ public sealed record LyricsServerForm(
     int IntervalHours,
     DateTimeOffset? LastAutoCheckUtc,
     IReadOnlyList<LyricsPathMap> Maps,
-    IReadOnlyList<string> LibraryLocations);
+    string? SectionKey,
+    string? ContainerFolder,
+    bool UseManualMaps,
+    IReadOnlyList<LyricsLocationMatch> Matches);
 
 public sealed class LyricsPageService(
     IDbContextFactory<ApplicationDbContext> databases,
@@ -79,7 +93,7 @@ public sealed class LyricsPageService(
     public async Task<IReadOnlyList<LyricsServerForm>> LoadAsync(CancellationToken cancellationToken = default)
     {
         await using var db = await databases.CreateDbContextAsync(cancellationToken);
-        var servers = await db.PlexServers.AsNoTracking().Include(server => server.Libraries).OrderBy(server => server.Slot).ThenBy(server => server.Id).ToListAsync(cancellationToken);
+        var servers = await db.PlexServers.AsNoTracking().OrderBy(server => server.Slot).ThenBy(server => server.Id).ToListAsync(cancellationToken);
         var settings = await db.LyricsSettings.AsNoTracking().ToListAsync(cancellationToken);
         return servers.Select(server => Form(server, settings.FirstOrDefault(item => item.PlexServerConnectionId == server.Id))).ToList();
     }
@@ -91,24 +105,82 @@ public sealed class LyricsPageService(
         var maps = input.Maps.Select(map => new LyricsPathMap(map.PlexPrefix, map.ContainerPrefix)).ToList();
         if (!LyricsPaths.TryNormalize(maps, out var normalized, out var error))
             throw new PlexBridgeException(error);
+        if (input.UseManualMaps && normalized.Count == 0)
+            throw new PlexBridgeException("Add a Plex prefix and a container prefix, or turn off manual prefixes.");
+        var section = CleanSection(input.SectionKey);
+        var container = CleanContainer(input.ContainerFolder);
 
         await using var db = await databases.CreateDbContextAsync(cancellationToken);
-        var server = await db.PlexServers.FirstOrDefaultAsync(item => item.Id == input.ServerId, cancellationToken)
-            ?? throw new PlexBridgeException("That server was not found.");
-        var row = await db.LyricsSettings.FirstOrDefaultAsync(item => item.PlexServerConnectionId == server.Id, cancellationToken);
-        var turningOn = input.AutoCheck && (row is null || !row.AutoCheckEnabled);
-        if (row is null)
+        var row = await LoadOrCreateAsync(db, input.ServerId, cancellationToken);
+        var turningOn = input.AutoCheck && !row.AutoCheckEnabled;
+        row.PathMapsJson = LyricsPaths.ToJson(normalized);
+        row.MusicSectionKey = section;
+        row.ContainerFolder = container;
+        row.UseManualMaps = input.UseManualMaps;
+        row.LocationMatchesJson = input.UseManualMaps || input.Matches.Count == 0
+            ? null
+            : LyricsLibraryMapper.MatchesToJson(input.Matches);
+        ApplySchedule(row, input.AutoCheck, input.IntervalHours, turningOn);
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<LyricsLibraryReport> MapLibraryAsync(int serverId, string? sectionKey, string? containerFolder, CancellationToken cancellationToken = default)
+    {
+        var section = CleanSection(sectionKey) ?? throw new PlexBridgeException("Choose a music library.");
+        var container = CleanContainer(string.IsNullOrWhiteSpace(containerFolder) ? LyricsLibraryMapper.DefaultContainer : containerFolder)
+            ?? throw new PlexBridgeException("The container path has to be a full path, such as /music.");
+
+        var (uri, token) = await OpenAsync(serverId, cancellationToken);
+        var sections = await libraries.GetSectionsAsync(uri, token, cancellationToken);
+        var library = sections.FirstOrDefault(item => item.Key == section && item.Type.Equals("artist", StringComparison.OrdinalIgnoreCase))
+            ?? throw new PlexBridgeException("That music library was not found.");
+        if (library.Locations.Count == 0)
+            throw new PlexBridgeException("Plex did not report a folder for that library.");
+
+        var samples = new List<string>();
+        var start = 0;
+        for (var page = 0; page < LyricsLibraryMapper.MaxPages; page++)
         {
-            row = new LyricsSetting { PlexServerConnectionId = server.Id };
-            db.LyricsSettings.Add(row);
+            var batch = await music.ReadTrackPageAsync(uri, token, section, start, cancellationToken);
+            foreach (var item in batch.Items)
+            {
+                if (item.Type.Equals("track", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(item.FilePath))
+                    samples.Add(item.FilePath);
+            }
+
+            if (batch.Items.Count < music.TrackPageSize)
+                break;
+            start += batch.Items.Count;
+            if (batch.Total is int total && start >= total)
+                break;
+            if (LyricsLibraryMapper.HasEnoughSamples(library.Locations, samples))
+                break;
         }
 
-        row.PathMapsJson = LyricsPaths.ToJson(normalized);
-        row.AutoCheckEnabled = input.AutoCheck;
-        row.AutoCheckIntervalHours = input.IntervalHours;
-        if (turningOn)
-            row.LastAutoCheckUtc = DateTimeOffset.UtcNow;
+        if (!LyricsLibraryMapper.TryMatch(library.Locations, container, samples, Directory.Exists, File.Exists, out var matches, out var maps, out var error))
+            throw new PlexBridgeException(error);
+
+        return new LyricsLibraryReport(library.Key, library.Title, container, matches, maps);
+    }
+
+    public async Task<LyricsLibraryReport> SaveLibraryAsync(LyricsSettingsInput input, CancellationToken cancellationToken = default)
+    {
+        if (input.IntervalHours is < 1 or > 168)
+            throw new PlexBridgeException("Check newly added tracks every 1 to 168 hours.");
+        var report = await MapLibraryAsync(input.ServerId, input.SectionKey, input.ContainerFolder, cancellationToken);
+
+        await using var db = await databases.CreateDbContextAsync(cancellationToken);
+        var row = await LoadOrCreateAsync(db, input.ServerId, cancellationToken);
+        var turningOn = input.AutoCheck && !row.AutoCheckEnabled;
+        var maps = report.Maps.Count > 0 ? report.Maps : LyricsPaths.FromJson(row.PathMapsJson);
+        row.PathMapsJson = LyricsPaths.ToJson(maps);
+        row.MusicSectionKey = report.SectionKey;
+        row.ContainerFolder = report.ContainerFolder;
+        row.UseManualMaps = false;
+        row.LocationMatchesJson = LyricsLibraryMapper.MatchesToJson(report.Matches);
+        ApplySchedule(row, input.AutoCheck, input.IntervalHours, turningOn);
         await db.SaveChangesAsync(cancellationToken);
+        return report;
     }
 
     public async Task<IReadOnlyList<PlexSectionInfo>> MusicLibrariesAsync(int serverId, CancellationToken cancellationToken = default)
@@ -149,14 +221,47 @@ public sealed class LyricsPageService(
         }
     }
 
+    private async Task<LyricsSetting> LoadOrCreateAsync(ApplicationDbContext db, int serverId, CancellationToken cancellationToken)
+    {
+        var server = await db.PlexServers.FirstOrDefaultAsync(item => item.Id == serverId, cancellationToken)
+            ?? throw new PlexBridgeException("That server was not found.");
+        var row = await db.LyricsSettings.FirstOrDefaultAsync(item => item.PlexServerConnectionId == server.Id, cancellationToken);
+        if (row is not null)
+            return row;
+        row = new LyricsSetting { PlexServerConnectionId = server.Id };
+        db.LyricsSettings.Add(row);
+        return row;
+    }
+
+    private static void ApplySchedule(LyricsSetting row, bool autoCheck, int intervalHours, bool turningOn)
+    {
+        row.AutoCheckEnabled = autoCheck;
+        row.AutoCheckIntervalHours = intervalHours;
+        if (turningOn)
+            row.LastAutoCheckUtc = DateTimeOffset.UtcNow;
+    }
+
+    private static string? CleanSection(string? sectionKey)
+    {
+        if (string.IsNullOrWhiteSpace(sectionKey))
+            return null;
+        var key = sectionKey.Trim();
+        if (key.Length is 0 or > 10 || !key.All(char.IsDigit))
+            throw new PlexBridgeException("The library id is not valid.");
+        return key;
+    }
+
+    private static string? CleanContainer(string? containerFolder)
+    {
+        if (string.IsNullOrWhiteSpace(containerFolder))
+            return null;
+        if (!LyricsPaths.TryNormalizeContainer(containerFolder, out var container, out var error))
+            throw new PlexBridgeException(error);
+        return container;
+    }
+
     private static LyricsServerForm Form(PlexServerConnection server, LyricsSetting? setting)
     {
-        var locations = server.Libraries
-            .Where(library => library.Type.Equals("artist", StringComparison.OrdinalIgnoreCase))
-            .SelectMany(library => ReadLocations(library.LocationsJson))
-            .Distinct(StringComparer.Ordinal)
-            .ToList();
-
         return new LyricsServerForm(
             server.Id,
             server.Slot,
@@ -167,18 +272,9 @@ public sealed class LyricsPageService(
             setting?.AutoCheckIntervalHours is > 0 and <= 168 ? setting.AutoCheckIntervalHours : 12,
             setting?.LastAutoCheckUtc,
             LyricsPaths.FromJson(setting?.PathMapsJson),
-            locations);
-    }
-
-    private static IEnumerable<string> ReadLocations(string json)
-    {
-        try
-        {
-            return System.Text.Json.JsonSerializer.Deserialize<List<string>>(json) ?? [];
-        }
-        catch (System.Text.Json.JsonException)
-        {
-            return [];
-        }
+            setting?.MusicSectionKey,
+            setting?.ContainerFolder,
+            setting?.UseManualMaps ?? false,
+            LyricsLibraryMapper.MatchesFromJson(setting?.LocationMatchesJson));
     }
 }

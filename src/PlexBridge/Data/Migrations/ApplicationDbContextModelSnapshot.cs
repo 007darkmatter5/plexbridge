@@ -263,7 +263,18 @@ namespace PlexBridge.Data.Migrations
                     b.Property<int>("AutoCheckIntervalHours")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("ContainerFolder")
+                        .HasMaxLength(400)
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTimeOffset?>("LastAutoCheckUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LocationMatchesJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MusicSectionKey")
+                        .HasMaxLength(16)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("PathMapsJson")
@@ -271,6 +282,9 @@ namespace PlexBridge.Data.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<int>("PlexServerConnectionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("UseManualMaps")
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");

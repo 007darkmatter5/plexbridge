@@ -145,6 +145,14 @@ public class LyricsSetting
     public int PlexServerConnectionId { get; set; }
     public PlexServerConnection? Server { get; set; }
     public string PathMapsJson { get; set; } = "[]";
+    /// <summary>Artist library chosen for automatic path mapping. Null when the row only has saved prefixes.</summary>
+    public string? MusicSectionKey { get; set; }
+    /// <summary>Container folder the library folders are mapped onto, usually /music.</summary>
+    public string? ContainerFolder { get; set; }
+    /// <summary>True when Advanced prefixes replace the library mapping.</summary>
+    public bool UseManualMaps { get; set; }
+    /// <summary>Last library-folder check. Null until a library is checked.</summary>
+    public string? LocationMatchesJson { get; set; }
     public bool AutoCheckEnabled { get; set; }
     public int AutoCheckIntervalHours { get; set; } = 12;
     public DateTimeOffset? LastAutoCheckUtc { get; set; }
