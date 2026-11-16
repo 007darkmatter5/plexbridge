@@ -4,7 +4,9 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using PlexBridge.Data;
+using PlexBridge.Lyrics;
 using PlexBridge.Plex;
 using PlexBridge.Security;
 using PlexBridge.Services;
@@ -110,6 +112,25 @@ public sealed class ServiceFixture : IDisposable
     }
 
     public T Get<T>() where T : notnull => Provider.GetRequiredService<T>();
+
+    public LyricsSyncQueue SyncQueue()
+        => new(Get<IDbContextFactory<ApplicationDbContext>>(), Get<TimeProvider>());
+
+    public LyricsSyncRefreshService SyncRefresh(PlexLyricsClient? plex = null)
+    {
+        if (plex is null)
+        {
+            var transport = new HandlerTransport(Handler);
+            plex = new PlexLyricsClient(transport, new ForwardingPlexWriteTransport(transport), new AllowAllAddressGuard(), NullLogger<PlexLyricsClient>.Instance);
+        }
+
+        return new LyricsSyncRefreshService(
+            Get<IDbContextFactory<ApplicationDbContext>>(),
+            Get<ISecretProtector>(),
+            plex,
+            Get<TimeProvider>(),
+            NullLogger<LyricsSyncRefreshService>.Instance);
+    }
 
     public void AssertNoSecret(string secret)
     {

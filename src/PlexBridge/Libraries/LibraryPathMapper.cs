@@ -469,6 +469,18 @@ public static class LibraryPathMapper
         => path.Replace('\\', '/').TrimEnd('/');
 }
 
+/// <summary>One line for a library folder or a manual prefix. A missing container is not labeled as the Plex path being missing.</summary>
+public static class PathMapText
+{
+    public static string Line(string plexLocation, string? containerPrefix, string status)
+    {
+        var name = string.IsNullOrWhiteSpace(status) ? LibraryMapStatus.NotFound : status.Trim();
+        if (!string.IsNullOrWhiteSpace(containerPrefix))
+            return plexLocation.Trim() + " → " + containerPrefix.Trim() + " · " + name;
+        return plexLocation.Trim() + " · " + name;
+    }
+}
+
 /// <summary>The closed library dropdown shows the library name, never the section key.</summary>
 public static class LibraryNames
 {

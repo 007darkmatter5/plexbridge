@@ -16,6 +16,7 @@ public sealed class LyricsAutoCheckService(
     PlexReadClient libraries,
     LyricsWorkflow workflow,
     LyricsJobs jobs,
+    LyricsSyncQueue sync,
     ILogger<LyricsAutoCheckService> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -95,7 +96,7 @@ public sealed class LyricsAutoCheckService(
 
         var since = setting.LastAutoCheckUtc ?? DateTimeOffset.UtcNow;
         var mount = await db.LibraryMounts.AsNoTracking().FirstOrDefaultAsync(item => item.PlexServerConnectionId == server.Id, cancellationToken);
-        var maps = PlexBridge.Libraries.LibraryMountStore.ReadMaps(mount, setting);
+        var maps = PlexBridge.Libraries.LibraryMountStore.ReadActiveMaps(mount, setting);
         if (maps.Count == 0)
         {
             await TouchAsync(setting.PlexServerConnectionId, advance: true, cancellationToken);
@@ -149,6 +150,7 @@ public sealed class LyricsAutoCheckService(
             try
             {
                 await workflow.PublishAsync(uri, token, ready, null, cancellationToken);
+                await sync.RecordAsync(server.Id, ready, cancellationToken);
                 wrote += ready.Count(row => row.ApplyResult?.StartsWith("Wrote ", StringComparison.Ordinal) == true);
             }
             catch (Exception exception) when (exception is PlexRequestException or PlexBridgeException)

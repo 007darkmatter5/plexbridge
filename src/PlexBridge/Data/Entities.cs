@@ -158,6 +158,32 @@ public class LyricsSetting
     public bool AutoCheckEnabled { get; set; }
     public int AutoCheckIntervalHours { get; set; } = 12;
     public DateTimeOffset? LastAutoCheckUtc { get; set; }
+    /// <summary>Minutes between Plex refreshes while a written lyrics file is waiting to show up.</summary>
+    public int SyncIntervalMinutes { get; set; } = 2;
+    /// <summary>Minutes to keep refreshing one track before giving up.</summary>
+    public int SyncWindowMinutes { get; set; } = 30;
+}
+
+/// <summary>
+/// A lyrics file written by this app that Plex has not reported yet.
+/// The Plex token is not stored here. The row survives a container restart.
+/// </summary>
+public class LyricsSyncItem
+{
+    public int Id { get; set; }
+    public int PlexServerConnectionId { get; set; }
+    public PlexServerConnection? Server { get; set; }
+    public string RatingKey { get; set; } = "";
+    public string AlbumKey { get; set; } = "";
+    public string Artist { get; set; } = "";
+    public string Album { get; set; } = "";
+    public string Title { get; set; } = "";
+    public string FileName { get; set; } = "";
+    public string Status { get; set; } = Lyrics.LyricsSyncStatus.Waiting;
+    public DateTimeOffset WrittenUtc { get; set; }
+    public DateTimeOffset DeadlineUtc { get; set; }
+    public DateTimeOffset NextRefreshUtc { get; set; }
+    public int AttemptCount { get; set; }
 }
 
 /// <summary>

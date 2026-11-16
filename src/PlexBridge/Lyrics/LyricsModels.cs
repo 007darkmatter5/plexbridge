@@ -11,8 +11,18 @@ public static class LyricsStatus
     public const string NotReachable = "Path not reachable";
     public const string NotWritable = "Path not writable";
     public const string LookupFailed = "Lookup failed";
+    public const string WaitingForSync = "Waiting for sync";
+    public const string NotPickedUp = "Not picked up by Plex yet";
 
     public static bool CanWrite(string status) => status is Synced or Plain;
+}
+
+/// <summary>Rows kept until Plex reports a lyrics stream for a file this app wrote.</summary>
+public static class LyricsSyncStatus
+{
+    public const string Waiting = "Waiting for sync";
+    public const string Done = "Plex has the lyrics";
+    public const string Missed = "Not picked up by Plex yet";
 }
 
 /// <summary>One Plex path prefix mapped onto a path inside this container.</summary>
@@ -23,6 +33,9 @@ public static class LyricsMapStatus
 {
     public const string Ok = "OK";
     public const string NotFound = "Not found";
+    public const string ContainerMissing = "Container folder missing";
+    public const string NotWritable = "Not writable";
+    public const string NoFiles = "No sample files";
 }
 
 /// <summary>One Plex library folder and where it landed in the container, if anywhere.</summary>
